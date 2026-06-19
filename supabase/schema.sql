@@ -4,9 +4,15 @@ create table if not exists menus (
   user_id uuid references auth.users not null,
   name text not null default 'メニュー',
   days text[] default '{}',
+  interval_days int,
+  start_date date,
   order_index int default 0,
   created_at timestamptz default now()
 );
+
+-- 既存テーブル用のマイグレーション（再実行可）
+alter table menus add column if not exists interval_days int;
+alter table menus add column if not exists start_date date;
 
 -- 種目（メニュー内）
 create table if not exists exercises (

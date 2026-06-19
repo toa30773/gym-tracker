@@ -21,7 +21,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen px-6 bg-white">
-      <h1 className="text-xl font-bold mb-8">筋トレ記録</h1>
+      <h1 className="text-xl font-bold mb-8">筋トレメニュー</h1>
 
       <form action={handleSubmit} className="w-full max-w-xs space-y-4">
         <div>

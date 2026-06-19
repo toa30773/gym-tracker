@@ -13,17 +13,20 @@ export default function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="flex items-center justify-center gap-2 py-1 px-4">
+    <nav
+      className="flex items-center justify-around gap-2 px-3 pt-2 bg-white border-t border-gray-200"
+      style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+    >
       {tabs.map((tab) => {
         const isActive = pathname === tab.href;
         return (
           <Link
             key={tab.href}
             href={tab.href}
-            className={`px-3 py-1 rounded-full text-[10px] font-bold transition-colors ${
+            className={`flex-1 text-center px-3 py-2.5 rounded-full text-xs font-bold transition-colors ${
               isActive
-                ? "bg-white border border-gray-300 text-black shadow-sm"
-                : "bg-gray-300 text-black"
+                ? "bg-gray-800 text-white"
+                : "bg-gray-200 text-gray-700"
             }`}
           >
             {tab.label}

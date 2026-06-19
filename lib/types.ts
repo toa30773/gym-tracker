@@ -11,6 +11,8 @@ export interface Database {
           user_id: string;
           name: string;
           days: string[];
+          interval_days: number | null;
+          start_date: string | null;
           order_index: number;
           created_at: string;
         };
@@ -19,6 +21,8 @@ export interface Database {
           user_id: string;
           name?: string;
           days?: string[];
+          interval_days?: number | null;
+          start_date?: string | null;
           order_index?: number;
           created_at?: string;
         };
@@ -27,6 +31,8 @@ export interface Database {
           user_id?: string;
           name?: string;
           days?: string[];
+          interval_days?: number | null;
+          start_date?: string | null;
           order_index?: number;
           created_at?: string;
         };
