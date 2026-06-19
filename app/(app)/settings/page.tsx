@@ -74,6 +74,7 @@ export default function SettingsPage() {
   const [message, setMessage] = useState("");
   const [showDaySelector, setShowDaySelector] = useState(false);
   const [intervalInput, setIntervalInput] = useState("");
+  const [showCopyModal, setShowCopyModal] = useState(false);
   const touchStartX = useRef<number | null>(null);
 
   const fetchMenus = useCallback(async () => {
@@ -183,6 +184,28 @@ export default function SettingsPage() {
     setMenuData((prev) => ({
       ...prev,
       exercises: [...prev.exercises, { ...defaultExercise(), body_part: "" }],
+    }));
+  }
+
+  // 他メニューから種目をコピーして現在のメニューに追加
+  function copyExerciseFromOther(srcMenu: MenuWithExercises, srcExId: string) {
+    const src = srcMenu.exercises.find((e) => e.id === srcExId);
+    if (!src) return;
+    const sortedSets = [...src.sets].sort((a, b) => a.set_number - b.set_number);
+    const copy: ExerciseData = {
+      body_part: src.body_part,
+      name: src.name,
+      memo: sortedSets[0]?.memo || "",
+      sets: sortedSets.map((s, i) => ({
+        set_number: i + 1,
+        weight: s.weight,
+        reps: s.reps,
+        machine_height: s.machine_height || "",
+      })),
+    };
+    setMenuData((prev) => ({
+      ...prev,
+      exercises: [...prev.exercises, copy],
     }));
   }
 
@@ -585,8 +608,8 @@ export default function SettingsPage() {
         );
       })}
 
-      {/* 画面中央：新しい部位グループを追加する＋ボタン */}
-      <div className="flex items-center justify-center py-4">
+      {/* 画面中央：新しい部位グループを追加する＋ボタン + 他メニューからコピー */}
+      <div className="flex items-center justify-center gap-3 py-4">
         <button
           onClick={addExerciseNewGroup}
           className="w-12 h-12 flex items-center justify-center bg-gray-100 border border-gray-300 rounded-full text-3xl font-light text-gray-500 hover:bg-gray-200 leading-none"
@@ -594,6 +617,15 @@ export default function SettingsPage() {
         >
           ＋
         </button>
+        {savedMenus.some((m) => m.id !== menuData.id && m.exercises.length > 0) && (
+          <button
+            onClick={() => setShowCopyModal(true)}
+            className="px-4 h-10 flex items-center justify-center bg-white border border-gray-400 rounded-full text-xs font-bold text-gray-700 hover:bg-gray-100"
+            title="他のメニューから種目をコピー"
+          >
+            📋 他のメニューから
+          </button>
+        )}
       </div>
 
       {/* 保存ボタン */}
@@ -677,6 +709,74 @@ export default function SettingsPage() {
               className="w-full mt-3 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
             >
               決定
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 他のメニューからコピーモーダル */}
+      {showCopyModal && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-end"
+          onClick={() => setShowCopyModal(false)}
+        >
+          <div
+            className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-4 pb-8 max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold">他のメニューから種目をコピー</h2>
+              <button
+                onClick={() => setShowCopyModal(false)}
+                className="text-xs text-gray-500"
+              >
+                閉じる
+              </button>
+            </div>
+
+            {savedMenus
+              .filter((m) => m.id !== menuData.id && m.exercises.length > 0)
+              .map((m) => (
+                <div key={m.id} className="mb-4">
+                  <p className="text-xs font-bold text-gray-700 mb-1.5">{m.name}</p>
+                  <ul className="space-y-1.5">
+                    {[...m.exercises]
+                      .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+                      .map((ex) => (
+                        <li
+                          key={ex.id}
+                          className="flex items-center justify-between gap-2 bg-gray-100 rounded-lg px-3 py-2"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <span className="inline-flex px-2 py-0.5 border border-gray-400 rounded-full text-[10px]">
+                                {ex.body_part}
+                              </span>
+                              <span className="text-xs font-bold truncate">
+                                {ex.name || "（無題）"}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-gray-500">
+                              {ex.sets.length}セット
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => copyExerciseFromOther(m, ex.id)}
+                            className="px-3 py-1 bg-gray-800 text-white rounded-full text-[10px] font-bold whitespace-nowrap flex-shrink-0"
+                          >
+                            コピー
+                          </button>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              ))}
+
+            <button
+              onClick={() => setShowCopyModal(false)}
+              className="w-full mt-2 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
+            >
+              完了
             </button>
           </div>
         </div>
