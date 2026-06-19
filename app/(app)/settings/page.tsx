@@ -162,11 +162,68 @@ export default function SettingsPage() {
     setIntervalInput(days ? String(days) : "");
   }
 
-  function addExercise() {
-    setMenuData((prev) => ({
-      ...prev,
-      exercises: [...prev.exercises, defaultExercise()],
-    }));
+  // 種目行内の＋: 「部位」以外を複製（部位は空欄に）
+  function duplicateExerciseWithoutBodyPart(exIdx: number) {
+    setMenuData((prev) => {
+      const src = prev.exercises[exIdx];
+      const copy: ExerciseData = {
+        body_part: "",
+        name: src.name,
+        memo: src.memo,
+        sets: src.sets.map((s) => ({
+          set_number: s.set_number,
+          weight: s.weight,
+          reps: s.reps,
+          machine_height: s.machine_height,
+        })),
+      };
+      const exercises = [...prev.exercises];
+      exercises.splice(exIdx + 1, 0, copy);
+      return { ...prev, exercises };
+    });
+  }
+
+  // 画面中央の＋: 部位を含めたブロック全体を複製（種目が無い場合はデフォルトを追加）
+  function duplicateExerciseFull() {
+    setMenuData((prev) => {
+      if (prev.exercises.length === 0) {
+        return { ...prev, exercises: [defaultExercise()] };
+      }
+      const src = prev.exercises[prev.exercises.length - 1];
+      const copy: ExerciseData = {
+        body_part: src.body_part,
+        name: src.name,
+        memo: src.memo,
+        sets: src.sets.map((s) => ({
+          set_number: s.set_number,
+          weight: s.weight,
+          reps: s.reps,
+          machine_height: s.machine_height,
+        })),
+      };
+      return { ...prev, exercises: [...prev.exercises, copy] };
+    });
+  }
+
+  function removeExercise(exIdx: number) {
+    setMenuData((prev) => {
+      if (prev.exercises.length <= 1) return prev;
+      const exercises = prev.exercises.filter((_, i) => i !== exIdx);
+      return { ...prev, exercises };
+    });
+  }
+
+  function removeSet(exIdx: number, setIdx: number) {
+    setMenuData((prev) => {
+      const exercises = [...prev.exercises];
+      const ex = { ...exercises[exIdx] };
+      if (ex.sets.length <= 1) return prev;
+      ex.sets = ex.sets
+        .filter((_, i) => i !== setIdx)
+        .map((s, i) => ({ ...s, set_number: i + 1 }));
+      exercises[exIdx] = ex;
+      return { ...prev, exercises };
+    });
   }
 
   function addSet(exIdx: number) {
@@ -227,11 +284,13 @@ export default function SettingsPage() {
       await supabase.from("menus").update(menuPayload).eq("id", menuId);
     }
 
+    const keepExerciseIds: string[] = [];
+
     for (let i = 0; i < menuData.exercises.length; i++) {
       const ex = menuData.exercises[i];
       let exId = ex.id;
       const exPayload = {
-        body_part: ex.body_part,
+        body_part: ex.body_part || "胸",
         name: ex.name,
         order_index: i,
       };
@@ -247,7 +306,9 @@ export default function SettingsPage() {
         await supabase.from("exercises").update(exPayload).eq("id", exId);
       }
       if (!exId) continue;
+      keepExerciseIds.push(exId);
 
+      const keepSetIds: string[] = [];
       for (const s of ex.sets) {
         const setPayload = {
           weight: s.weight,
@@ -256,16 +317,49 @@ export default function SettingsPage() {
           memo: ex.memo || null,
         };
         if (!s.id) {
-          await supabase.from("sets").insert({
-            exercise_id: exId,
-            user_id: user.id,
-            set_number: s.set_number,
-            ...setPayload,
-          });
+          const { data } = await supabase
+            .from("sets")
+            .insert({
+              exercise_id: exId,
+              user_id: user.id,
+              set_number: s.set_number,
+              ...setPayload,
+            })
+            .select()
+            .single();
+          if (data?.id) keepSetIds.push(data.id);
         } else {
-          await supabase.from("sets").update(setPayload).eq("id", s.id);
+          await supabase
+            .from("sets")
+            .update({ set_number: s.set_number, ...setPayload })
+            .eq("id", s.id);
+          keepSetIds.push(s.id);
         }
       }
+
+      // この種目で不要になったセットを削除
+      const { data: existingSets } = await supabase
+        .from("sets")
+        .select("id")
+        .eq("exercise_id", exId);
+      const toDeleteSets = (existingSets || [])
+        .map((r: { id: string }) => r.id)
+        .filter((id: string) => !keepSetIds.includes(id));
+      if (toDeleteSets.length > 0) {
+        await supabase.from("sets").delete().in("id", toDeleteSets);
+      }
+    }
+
+    // 削除された種目をDBから消す
+    const { data: existingEx } = await supabase
+      .from("exercises")
+      .select("id")
+      .eq("menu_id", menuId!);
+    const toDeleteEx = (existingEx || [])
+      .map((r: { id: string }) => r.id)
+      .filter((id: string) => !keepExerciseIds.includes(id));
+    if (toDeleteEx.length > 0) {
+      await supabase.from("exercises").delete().in("id", toDeleteEx);
     }
 
     setMessage("保存しました");
@@ -400,16 +494,27 @@ export default function SettingsPage() {
       {/* 種目リスト */}
       {menuData.exercises.map((ex, exIdx) => (
         <div key={exIdx} className="mb-3 px-4">
-          {/* 部位 */}
-          <button
-            onClick={() => setPicker({ exIdx, setIdx: 0, field: "body_part" })}
-            className="inline-flex items-center px-3 py-1 bg-white border border-gray-400 rounded-full text-xs mb-2"
-          >
-            【{ex.body_part}】
-          </button>
+          {/* 部位 + 削除ボタン */}
+          <div className="flex items-center justify-between mb-2">
+            <button
+              onClick={() => setPicker({ exIdx, setIdx: 0, field: "body_part" })}
+              className="inline-flex items-center px-3 py-1 bg-white border border-gray-400 rounded-full text-xs"
+            >
+              【{ex.body_part || "部位を入力"}】
+            </button>
+            {menuData.exercises.length > 1 && (
+              <button
+                onClick={() => removeExercise(exIdx)}
+                className="w-7 h-7 flex items-center justify-center bg-red-100 text-red-600 rounded-full text-base font-bold leading-none border border-red-300"
+                title="この種目を削除"
+              >
+                −
+              </button>
+            )}
+          </div>
 
           <div className="border border-gray-300 rounded-xl p-3 relative">
-            {/* 種目名 + ＋ボタン */}
+            {/* 種目名 + ＋ボタン（部位以外を複製） */}
             <div className="flex items-center gap-2 mb-2">
               <span className="text-sm">●</span>
               <input
@@ -420,9 +525,9 @@ export default function SettingsPage() {
                 className="flex-1 bg-gray-200 rounded-full px-3 py-1.5 text-xs outline-none placeholder-gray-500"
               />
               <button
-                onClick={addExercise}
+                onClick={() => duplicateExerciseWithoutBodyPart(exIdx)}
                 className="w-7 h-7 flex items-center justify-center bg-gray-200 rounded-full text-lg font-bold leading-none"
-                title="種目を追加"
+                title="部位以外を複製"
               >
                 ＋
               </button>
@@ -441,7 +546,7 @@ export default function SettingsPage() {
 
             {/* セットリスト */}
             {ex.sets.map((s, setIdx) => (
-              <div key={setIdx} className="flex items-center gap-2 mb-2 pl-4">
+              <div key={setIdx} className="flex items-center gap-1.5 mb-2 pl-4">
                 <div className="flex items-center justify-center w-5 h-5 bg-gray-300 rounded text-xs flex-shrink-0">
                   {s.set_number}
                 </div>
@@ -457,6 +562,15 @@ export default function SettingsPage() {
                 >
                   {s.reps}回
                 </button>
+                {ex.sets.length > 1 && (
+                  <button
+                    onClick={() => removeSet(exIdx, setIdx)}
+                    className="w-6 h-6 flex items-center justify-center bg-red-100 text-red-600 rounded-full text-sm font-bold leading-none flex-shrink-0 border border-red-300"
+                    title="セットを削除"
+                  >
+                    −
+                  </button>
+                )}
                 {setIdx === ex.sets.length - 1 && (
                   <button
                     onClick={() => addSet(exIdx)}
@@ -480,6 +594,17 @@ export default function SettingsPage() {
           </div>
         </div>
       ))}
+
+      {/* 画面中央：ブロック全体を複製する＋ボタン */}
+      <div className="flex items-center justify-center py-4">
+        <button
+          onClick={duplicateExerciseFull}
+          className="w-12 h-12 flex items-center justify-center bg-gray-100 border border-gray-300 rounded-full text-3xl font-light text-gray-500 hover:bg-gray-200 leading-none"
+          title="ブロック全体を複製"
+        >
+          ＋
+        </button>
+      </div>
 
       {/* 保存ボタン */}
       <div className="flex items-center justify-end px-4 pb-2 gap-2">

@@ -5,8 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Exercise, WorkoutSet, WeightUpdate } from "@/lib/types";
 
 interface SetWithHistory extends WorkoutSet {
-  latestUpdate: WeightUpdate | null;
-  prevUpdate: WeightUpdate | null;
+  history: WeightUpdate[];
 }
 
 interface ExerciseWithHistory extends Exercise {
@@ -21,10 +20,20 @@ function formatDate(iso: string | null) {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+function formatDateTime(iso: string) {
+  const d = new Date(iso);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${d.getFullYear()}/${mm}/${dd} ${hh}:${mi}`;
+}
+
 export default function WeightHistoryPage() {
   const supabase = createClient();
   const [exercises, setExercises] = useState<ExerciseWithHistory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [detail, setDetail] = useState<ExerciseWithHistory | null>(null);
 
   const fetchHistory = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -36,14 +45,16 @@ export default function WeightHistoryPage() {
       .eq("user_id", user.id)
       .order("order_index");
 
-    if (!exData) { setLoading(false); return; }
+    if (!exData) {
+      setLoading(false);
+      return;
+    }
 
     const results: ExerciseWithHistory[] = [];
 
     for (const ex of exData) {
       const sortedSets = (ex.sets as WorkoutSet[]).sort((a, b) => a.set_number - b.set_number);
       const setIds = sortedSets.map((s) => s.id);
-
       if (setIds.length === 0) continue;
 
       const { data: updates } = await supabase
@@ -58,21 +69,15 @@ export default function WeightHistoryPage() {
         updatesBySet[u.set_id].push(u as WeightUpdate);
       });
 
-      const setsWithHistory: SetWithHistory[] = sortedSets.map((s) => {
-        const his = updatesBySet[s.id] || [];
-        return {
-          ...s,
-          latestUpdate: his[0] || null,
-          prevUpdate: his[1] || null,
-        };
-      });
+      const setsWithHistory: SetWithHistory[] = sortedSets.map((s) => ({
+        ...s,
+        history: updatesBySet[s.id] || [],
+      }));
 
-      // 種目全体の最終更新日・前回更新日
       const allUpdates = (updates || []) as WeightUpdate[];
       const latestUpdatedAt = allUpdates[0]?.updated_at || null;
-      const prevUpdatedAt = allUpdates.find(
-        (u) => u.updated_at !== latestUpdatedAt
-      )?.updated_at || null;
+      const prevUpdatedAt =
+        allUpdates.find((u) => u.updated_at !== latestUpdatedAt)?.updated_at || null;
 
       results.push({
         ...(ex as Exercise),
@@ -82,7 +87,7 @@ export default function WeightHistoryPage() {
       });
     }
 
-    setExercises(results.filter((ex) => ex.setsWithHistory.some((s) => s.latestUpdate)));
+    setExercises(results.filter((ex) => ex.setsWithHistory.some((s) => s.history.length > 0)));
     setLoading(false);
   }, [supabase]);
 
@@ -114,10 +119,18 @@ export default function WeightHistoryPage() {
       {exercises.map((ex, exIdx) => (
         <div key={ex.id}>
           <div className="px-4 py-2">
-            {/* 更新日情報 */}
-            <p className="text-xs mb-2">
-              更新日　{formatDate(ex.latestUpdatedAt)}　前回の更新日　{formatDate(ex.prevUpdatedAt)}
-            </p>
+            {/* 更新日情報 + 履歴ボタン */}
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs">
+                更新日　{formatDate(ex.latestUpdatedAt)}　前回　{formatDate(ex.prevUpdatedAt)}
+              </p>
+              <button
+                onClick={() => setDetail(ex)}
+                className="px-3 py-1 bg-gray-800 text-white rounded-full text-xs font-bold"
+              >
+                履歴
+              </button>
+            </div>
 
             {/* 種目名 */}
             <div className="flex justify-center mb-2">
@@ -128,21 +141,23 @@ export default function WeightHistoryPage() {
 
             {/* セット別重量推移 */}
             {ex.setsWithHistory.map((s) => {
-              if (!s.latestUpdate) return null;
+              const latest = s.history[0];
+              const prev = s.history[1];
+              if (!latest) return null;
               return (
                 <div key={s.id} className="flex items-center gap-2 mb-1.5">
                   <div className="flex items-center justify-center w-5 h-5 bg-gray-200 rounded text-xs">
                     {s.set_number}
                   </div>
                   <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
-                    {s.prevUpdate ? `${s.prevUpdate.new_weight}kg` : `${s.latestUpdate.old_weight ?? "--"}kg`}
+                    {prev ? `${prev.new_weight}kg` : `${latest.old_weight ?? "--"}kg`}
                   </div>
                   <span className="text-sm font-bold">→</span>
                   <div className="flex items-center justify-center w-5 h-5 bg-gray-200 rounded text-xs">
                     {s.set_number}
                   </div>
                   <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
-                    {s.latestUpdate.new_weight}kg
+                    {latest.new_weight}kg
                   </div>
                 </div>
               );
@@ -154,6 +169,58 @@ export default function WeightHistoryPage() {
           )}
         </div>
       ))}
+
+      {/* 履歴詳細モーダル */}
+      {detail && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-end"
+          onClick={() => setDetail(null)}
+        >
+          <div
+            className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-4 pb-8 max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold">{detail.name} の履歴</h2>
+              <button
+                onClick={() => setDetail(null)}
+                className="text-xs text-gray-500"
+              >
+                閉じる
+              </button>
+            </div>
+
+            {detail.setsWithHistory.map((s) => (
+              <div key={s.id} className="mb-4">
+                <p className="text-xs font-bold mb-1.5">セット {s.set_number}</p>
+                {s.history.length === 0 ? (
+                  <p className="text-[10px] text-gray-400 pl-3">履歴なし</p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {s.history.map((u) => (
+                      <li
+                        key={u.id}
+                        className="flex items-center justify-between gap-2 bg-gray-100 rounded-lg px-3 py-2"
+                      >
+                        <span className="text-[10px] text-gray-500">
+                          {formatDateTime(u.updated_at)}
+                        </span>
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <span className="text-gray-500">
+                            {u.old_weight ?? "--"}kg
+                          </span>
+                          <span>→</span>
+                          <span className="font-bold">{u.new_weight}kg</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

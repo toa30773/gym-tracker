@@ -1,5 +1,4 @@
 import BottomNav from "@/components/BottomNav";
-import TimerPanel from "@/components/TimerPanel";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -8,7 +7,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {children}
       </main>
       <div className="flex-shrink-0">
-        <TimerPanel />
         <BottomNav />
       </div>
     </div>

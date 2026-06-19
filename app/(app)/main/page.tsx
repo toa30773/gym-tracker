@@ -44,6 +44,8 @@ export default function MainPage() {
   const [modal, setModal] = useState<WeightModal | null>(null);
   const [loading, setLoading] = useState(true);
   const [noMenuToday, setNoMenuToday] = useState(false);
+  const [memoEdits, setMemoEdits] = useState<Record<string, string>>({});
+  const [savingMemo, setSavingMemo] = useState<string | null>(null);
 
   const fetchTodayMenu = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -119,6 +121,31 @@ export default function MainPage() {
     });
   }
 
+  async function saveMemo(exerciseId: string, setIds: string[], memo: string) {
+    setSavingMemo(exerciseId);
+    const { error } = await supabase
+      .from("sets")
+      .update({ memo: memo || null })
+      .in("id", setIds);
+    if (error) {
+      console.error("メモの保存に失敗しました", error);
+    } else {
+      // ローカルstateも更新（再フェッチを避けて軽量化）
+      setMenu((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          exercises: prev.exercises.map((ex) =>
+            ex.id === exerciseId
+              ? { ...ex, sets: ex.sets.map((s) => ({ ...s, memo: memo || null })) }
+              : ex
+          ),
+        };
+      });
+    }
+    setSavingMemo(null);
+  }
+
   async function saveWeightUpdate() {
     if (!modal) return;
     if (modal.newWeight <= modal.oldWeight) return;
@@ -181,8 +208,10 @@ export default function MainPage() {
 
       {/* 種目リスト */}
       {menu.exercises.map((ex, exIdx) => {
-        const memos = ex.sets.map((s) => s.memo).filter((m): m is string => !!m && m.length > 0);
-        const uniqueMemos = Array.from(new Set(memos));
+        const currentMemo = ex.sets[0]?.memo || "";
+        const editedMemo = memoEdits[ex.id] ?? currentMemo;
+        const isDirty = editedMemo !== currentMemo;
+        const isSaving = savingMemo === ex.id;
         return (
           <div key={ex.id}>
             <div className="px-4 py-2">
@@ -225,16 +254,49 @@ export default function MainPage() {
                 </div>
               ))}
 
-              {/* メモ */}
-              {uniqueMemos.length > 0 && (
-                <div className="mt-2 pl-4 space-y-1">
-                  {uniqueMemos.map((m, i) => (
-                    <div key={i} className="bg-gray-200 rounded-xl px-3 py-2 text-xs">
-                      {m}
-                    </div>
-                  ))}
-                </div>
-              )}
+              {/* メモ（編集可能） */}
+              <div className="mt-2 pl-4">
+                <textarea
+                  value={editedMemo}
+                  onChange={(e) =>
+                    setMemoEdits((prev) => ({ ...prev, [ex.id]: e.target.value }))
+                  }
+                  placeholder="メモを入力"
+                  rows={2}
+                  className="w-full bg-gray-200 rounded-xl px-3 py-2 text-xs resize-none outline-none placeholder-gray-500"
+                />
+                {isDirty && (
+                  <div className="flex justify-end mt-1 gap-2">
+                    <button
+                      onClick={() =>
+                        setMemoEdits((prev) => {
+                          const next = { ...prev };
+                          delete next[ex.id];
+                          return next;
+                        })
+                      }
+                      className="text-[10px] text-gray-500 underline"
+                    >
+                      キャンセル
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const setIds = ex.sets.map((s) => s.id);
+                        await saveMemo(ex.id, setIds, editedMemo);
+                        setMemoEdits((prev) => {
+                          const next = { ...prev };
+                          delete next[ex.id];
+                          return next;
+                        });
+                      }}
+                      disabled={isSaving}
+                      className="text-[10px] bg-gray-800 text-white px-2 py-0.5 rounded-full font-bold disabled:opacity-50"
+                    >
+                      {isSaving ? "保存中..." : "メモを保存"}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             {exIdx < menu.exercises.length - 1 && (
