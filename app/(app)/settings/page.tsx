@@ -623,7 +623,7 @@ export default function SettingsPage() {
             className="px-4 h-10 flex items-center justify-center bg-white border border-gray-400 rounded-full text-xs font-bold text-gray-700 hover:bg-gray-100"
             title="他のメニューから種目をコピー"
           >
-            📋 他のメニューから
+            他のメニューから
           </button>
         )}
       </div>
