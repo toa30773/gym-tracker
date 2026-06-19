@@ -212,6 +212,7 @@ export default function MainPage() {
         const editedMemo = memoEdits[ex.id] ?? currentMemo;
         const isDirty = editedMemo !== currentMemo;
         const isSaving = savingMemo === ex.id;
+        const machineHeight = ex.sets.find((s) => s.machine_height)?.machine_height || "";
         return (
           <div key={ex.id}>
             <div className="px-4 py-2">
@@ -225,12 +226,17 @@ export default function MainPage() {
                 </span>
               </div>
 
-              {/* 種目名 */}
+              {/* 種目名 + 椅子の高さ */}
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-sm">●</span>
                 <div className="bg-gray-200 rounded-full px-3 py-1 text-xs flex-1">
                   {ex.name}
                 </div>
+                {machineHeight && (
+                  <div className="bg-gray-200 rounded-full px-3 py-1 text-xs whitespace-nowrap">
+                    椅子: {machineHeight}
+                  </div>
+                )}
               </div>
 
               {/* セットリスト */}

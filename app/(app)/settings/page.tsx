@@ -162,20 +162,17 @@ export default function SettingsPage() {
     setIntervalInput(days ? String(days) : "");
   }
 
-  // 種目行内の＋: 「部位」以外を複製（部位は空欄に）
-  function duplicateExerciseWithoutBodyPart(exIdx: number) {
+  // 種目行内の＋: 部位は複製せず、種目名/椅子の高さ/重量/レップ数/メモも全て空にし、
+  // セット数（行数）だけ同じ構造で複製した新しい空ブロックを追加する
+  function addEmptyExerciseTemplate(exIdx: number) {
     setMenuData((prev) => {
       const src = prev.exercises[exIdx];
+      const setCount = Math.max(1, src.sets.length);
       const copy: ExerciseData = {
         body_part: "",
-        name: src.name,
-        memo: src.memo,
-        sets: src.sets.map((s) => ({
-          set_number: s.set_number,
-          weight: s.weight,
-          reps: s.reps,
-          machine_height: s.machine_height,
-        })),
+        name: "",
+        memo: "",
+        sets: Array.from({ length: setCount }, (_, i) => defaultSet(i + 1)),
       };
       const exercises = [...prev.exercises];
       exercises.splice(exIdx + 1, 0, copy);
@@ -308,12 +305,15 @@ export default function SettingsPage() {
       if (!exId) continue;
       keepExerciseIds.push(exId);
 
+      // 椅子の高さは set[0] のみUIで編集するので、全セットに伝播させる
+      const sharedMachineHeight = ex.sets[0]?.machine_height || null;
+
       const keepSetIds: string[] = [];
       for (const s of ex.sets) {
         const setPayload = {
           weight: s.weight,
           reps: s.reps,
-          machine_height: s.machine_height || null,
+          machine_height: sharedMachineHeight,
           memo: ex.memo || null,
         };
         if (!s.id) {
@@ -525,9 +525,9 @@ export default function SettingsPage() {
                 className="flex-1 bg-gray-200 rounded-full px-3 py-1.5 text-xs outline-none placeholder-gray-500"
               />
               <button
-                onClick={() => duplicateExerciseWithoutBodyPart(exIdx)}
+                onClick={() => addEmptyExerciseTemplate(exIdx)}
                 className="w-7 h-7 flex items-center justify-center bg-gray-200 rounded-full text-lg font-bold leading-none"
-                title="部位以外を複製"
+                title="空の種目テンプレートを追加（部位以外）"
               >
                 ＋
               </button>
