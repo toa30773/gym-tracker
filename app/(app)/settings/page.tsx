@@ -162,17 +162,15 @@ export default function SettingsPage() {
     setIntervalInput(days ? String(days) : "");
   }
 
-  // 種目行内の＋: 部位は複製せず、種目名/椅子の高さ/重量/レップ数/メモも全て空にし、
-  // セット数（行数）だけ同じ構造で複製した新しい空ブロックを追加する
-  function addEmptyExerciseTemplate(exIdx: number) {
+  // 種目行内の＋: 同じ部位グループ内に完全に空の種目を追加（部位は引き継ぐ、UIでは非表示）
+  function addExerciseSameGroup(exIdx: number) {
     setMenuData((prev) => {
       const src = prev.exercises[exIdx];
-      const setCount = Math.max(1, src.sets.length);
       const copy: ExerciseData = {
-        body_part: "",
+        body_part: src.body_part,
         name: "",
         memo: "",
-        sets: Array.from({ length: setCount }, (_, i) => defaultSet(i + 1)),
+        sets: [defaultSet(1)],
       };
       const exercises = [...prev.exercises];
       exercises.splice(exIdx + 1, 0, copy);
@@ -180,26 +178,12 @@ export default function SettingsPage() {
     });
   }
 
-  // 画面中央の＋: 部位を含めたブロック全体を複製（種目が無い場合はデフォルトを追加）
-  function duplicateExerciseFull() {
-    setMenuData((prev) => {
-      if (prev.exercises.length === 0) {
-        return { ...prev, exercises: [defaultExercise()] };
-      }
-      const src = prev.exercises[prev.exercises.length - 1];
-      const copy: ExerciseData = {
-        body_part: src.body_part,
-        name: src.name,
-        memo: src.memo,
-        sets: src.sets.map((s) => ({
-          set_number: s.set_number,
-          weight: s.weight,
-          reps: s.reps,
-          machine_height: s.machine_height,
-        })),
-      };
-      return { ...prev, exercises: [...prev.exercises, copy] };
-    });
+  // 画面中央の＋: 新しい部位グループとして空の種目を追加（部位は空欄からスタート）
+  function addExerciseNewGroup() {
+    setMenuData((prev) => ({
+      ...prev,
+      exercises: [...prev.exercises, { ...defaultExercise(), body_part: "" }],
+    }));
   }
 
   function removeExercise(exIdx: number) {
@@ -492,29 +476,25 @@ export default function SettingsPage() {
       <div className="h-px bg-black mx-4 mb-3" />
 
       {/* 種目リスト */}
-      {menuData.exercises.map((ex, exIdx) => (
-        <div key={exIdx} className="mb-3 px-4">
-          {/* 部位 + 削除ボタン */}
-          <div className="flex items-center justify-between mb-2">
-            <button
-              onClick={() => setPicker({ exIdx, setIdx: 0, field: "body_part" })}
-              className="inline-flex items-center px-3 py-1 bg-white border border-gray-400 rounded-full text-xs"
-            >
-              【{ex.body_part || "部位を入力"}】
-            </button>
-            {menuData.exercises.length > 1 && (
+      {menuData.exercises.map((ex, exIdx) => {
+        const prevBodyPart = exIdx > 0 ? menuData.exercises[exIdx - 1].body_part : null;
+        const isGroupHead = prevBodyPart !== ex.body_part;
+        return (
+        <div key={exIdx} className={`px-4 ${isGroupHead ? "mt-2 mb-2" : "mb-2"}`}>
+          {/* 部位バッジ（同じ部位の連続は最初の1つだけ表示） */}
+          {isGroupHead && (
+            <div className="mb-2">
               <button
-                onClick={() => removeExercise(exIdx)}
-                className="w-7 h-7 flex items-center justify-center bg-red-100 text-red-600 rounded-full text-base font-bold leading-none border border-red-300"
-                title="この種目を削除"
+                onClick={() => setPicker({ exIdx, setIdx: 0, field: "body_part" })}
+                className="inline-flex items-center px-3 py-1 bg-white border border-gray-400 rounded-full text-xs"
               >
-                −
+                【{ex.body_part || "部位を入力"}】
               </button>
-            )}
-          </div>
+            </div>
+          )}
 
           <div className="border border-gray-300 rounded-xl p-3 relative">
-            {/* 種目名 + ＋ボタン（部位以外を複製） */}
+            {/* 種目名 + ＋ボタン（同じ部位グループに空種目を追加） + −削除ボタン */}
             <div className="flex items-center gap-2 mb-2">
               <span className="text-sm">●</span>
               <input
@@ -525,12 +505,21 @@ export default function SettingsPage() {
                 className="flex-1 bg-gray-200 rounded-full px-3 py-1.5 text-xs outline-none placeholder-gray-500"
               />
               <button
-                onClick={() => addEmptyExerciseTemplate(exIdx)}
-                className="w-7 h-7 flex items-center justify-center bg-gray-200 rounded-full text-lg font-bold leading-none"
-                title="空の種目テンプレートを追加（部位以外）"
+                onClick={() => addExerciseSameGroup(exIdx)}
+                className="w-7 h-7 flex items-center justify-center bg-gray-200 rounded-full text-lg font-bold leading-none flex-shrink-0"
+                title="同じ部位で空の種目を追加"
               >
                 ＋
               </button>
+              {menuData.exercises.length > 1 && (
+                <button
+                  onClick={() => removeExercise(exIdx)}
+                  className="w-7 h-7 flex items-center justify-center bg-red-100 text-red-600 rounded-full text-base font-bold leading-none border border-red-300 flex-shrink-0"
+                  title="この種目を削除"
+                >
+                  −
+                </button>
+              )}
             </div>
 
             {/* 椅子の高さ */}
@@ -593,14 +582,15 @@ export default function SettingsPage() {
             />
           </div>
         </div>
-      ))}
+        );
+      })}
 
-      {/* 画面中央：ブロック全体を複製する＋ボタン */}
+      {/* 画面中央：新しい部位グループを追加する＋ボタン */}
       <div className="flex items-center justify-center py-4">
         <button
-          onClick={duplicateExerciseFull}
+          onClick={addExerciseNewGroup}
           className="w-12 h-12 flex items-center justify-center bg-gray-100 border border-gray-300 rounded-full text-3xl font-light text-gray-500 hover:bg-gray-200 leading-none"
-          title="ブロック全体を複製"
+          title="新しい部位グループを追加"
         >
           ＋
         </button>

@@ -213,14 +213,20 @@ export default function MainPage() {
         const isDirty = editedMemo !== currentMemo;
         const isSaving = savingMemo === ex.id;
         const machineHeight = ex.sets.find((s) => s.machine_height)?.machine_height || "";
+        const prevBodyPart = exIdx > 0 ? menu.exercises[exIdx - 1].body_part : null;
+        const isGroupHead = prevBodyPart !== ex.body_part;
         return (
           <div key={ex.id}>
             <div className="px-4 py-2">
-              {/* 部位 + 更新回数 */}
+              {/* 部位（グループ先頭のみ） + 更新回数 */}
               <div className="flex items-center justify-between mb-1">
-                <div className="inline-flex px-3 py-1 border border-gray-400 rounded-full text-xs">
-                  【{ex.body_part}】
-                </div>
+                {isGroupHead ? (
+                  <div className="inline-flex px-3 py-1 border border-gray-400 rounded-full text-xs">
+                    【{ex.body_part}】
+                  </div>
+                ) : (
+                  <span />
+                )}
                 <span className="text-xs text-gray-500">
                   重量更新回数{updateCounts[ex.id] || 0}回
                 </span>
