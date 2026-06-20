@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   getMenusWithExercisesForUser,
   putMenu,
@@ -105,7 +105,6 @@ export default function SettingsPage() {
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const touchStartX = useRef<number | null>(null);
 
   const fetchMenus = useCallback(async () => {
     const userId = await getCurrentUserId();
@@ -499,34 +498,8 @@ export default function SettingsPage() {
     setTimeout(() => setMessage(""), 2000);
   }
 
-  // スワイプ
-  function onTouchStart(e: React.TouchEvent) {
-    // ボタンや入力欄から始まったタッチはメニュー切替スワイプとして扱わない。
-    // 指の小さな横ブレで savedMenus の切替が走り、その結果コピー元判定が
-    // 変わってボタンが消える＝「反応しない」「別ページに飛んだ」に見える事故を防ぐ。
-    const target = e.target as HTMLElement | null;
-    if (target?.closest("button, a, input, textarea, select, label")) {
-      touchStartX.current = null;
-      return;
-    }
-    touchStartX.current = e.touches[0].clientX;
-  }
-  function onTouchEnd(e: React.TouchEvent) {
-    if (touchStartX.current === null) return;
-    const dx = e.changedTouches[0].clientX - touchStartX.current;
-    touchStartX.current = null;
-    if (Math.abs(dx) < 60) return;
-    if (visibleCount < 2) return;
-    if (dx < 0 && currentIdx < visibleCount - 1) switchMenu(currentIdx + 1);
-    if (dx > 0 && currentIdx > 0) switchMenu(currentIdx - 1);
-  }
-
   return (
-    <div
-      className="pb-2"
-      onTouchStart={onTouchStart}
-      onTouchEnd={onTouchEnd}
-    >
+    <div className="pb-2">
       {/* ヘッダー */}
       <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2">
         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -822,15 +795,25 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* メニュー切替インジケーター */}
-      {visibleCount > 1 && (
-        <div className="pb-2 pt-1">
-          <div className="flex flex-wrap items-center justify-center gap-1.5 px-2">
+      {/* 保存バー（常時下部に固定）：左=削除 / 中央=メニュー切替 / 右=保存 */}
+      <div className="sticky bottom-0 z-30 bg-white border-t border-gray-200 px-3 py-2 flex items-center gap-2">
+        <div className="flex-1 flex items-center min-w-0">
+          {menuData.id && (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="text-[10px] text-red-500 underline whitespace-nowrap"
+            >
+              このメニューを削除
+            </button>
+          )}
+        </div>
+        {visibleCount > 1 && (
+          <div className="flex items-center justify-center gap-1 flex-wrap max-w-[50%]">
             {[...Array(visibleCount)].map((_, i) => (
               <button
                 key={i}
                 onClick={() => switchMenu(i)}
-                className={`flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold transition-colors ${
+                className={`flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold transition-colors flex-shrink-0 ${
                   currentIdx === i
                     ? "bg-gray-800 text-white"
                     : i < savedMenus.length
@@ -842,30 +825,13 @@ export default function SettingsPage() {
               </button>
             ))}
           </div>
-          <p className="text-center text-[10px] text-gray-400 mt-1">
-            ← スワイプで切替 →
-          </p>
-        </div>
-      )}
-
-      {/* 保存バー（常時下部に固定） */}
-      <div className="sticky bottom-0 z-30 bg-white border-t border-gray-200 px-4 py-2 flex items-center justify-between gap-2">
-        {menuData.id ? (
-          <button
-            onClick={() => setConfirmDelete(true)}
-            className="text-xs text-red-500 underline"
-          >
-            このメニューを削除
-          </button>
-        ) : (
-          <span />
         )}
-        <div className="flex items-center gap-2">
-          {message && <span className="text-xs text-green-600">{message}</span>}
+        <div className="flex-1 flex items-center justify-end gap-2">
+          {message && <span className="text-[10px] text-green-600 whitespace-nowrap">{message}</span>}
           <button
             onClick={save}
             disabled={saving}
-            className="px-5 py-1.5 bg-gray-800 text-white rounded-full text-xs font-bold disabled:opacity-50"
+            className="px-4 py-1.5 bg-gray-800 text-white rounded-full text-xs font-bold disabled:opacity-50 whitespace-nowrap"
           >
             {saving ? "保存中..." : "保存"}
           </button>
