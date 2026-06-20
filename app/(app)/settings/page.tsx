@@ -501,6 +501,14 @@ export default function SettingsPage() {
 
   // スワイプ
   function onTouchStart(e: React.TouchEvent) {
+    // ボタンや入力欄から始まったタッチはメニュー切替スワイプとして扱わない。
+    // 指の小さな横ブレで savedMenus の切替が走り、その結果コピー元判定が
+    // 変わってボタンが消える＝「反応しない」「別ページに飛んだ」に見える事故を防ぐ。
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("button, a, input, textarea, select, label")) {
+      touchStartX.current = null;
+      return;
+    }
     touchStartX.current = e.touches[0].clientX;
   }
   function onTouchEnd(e: React.TouchEvent) {
