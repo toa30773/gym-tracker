@@ -9,7 +9,7 @@ import { WEIGHT_STEPS, buildWeightOptions } from "@/lib/types";
 const BODY_PARTS = ["胸", "背中", "肩", "腕", "脚", "腹", "体幹", "全身"];
 const DAYS = ["月", "火", "水", "木", "金", "土", "日"];
 const REPS = Array.from({ length: 30 }, (_, i) => i + 1);
-const MAX_MENUS = 3;
+const MAX_MENUS = 10;
 
 interface SetData {
   id?: string;
@@ -687,25 +687,27 @@ export default function SettingsPage() {
 
       {/* メニュー切替インジケーター */}
       {visibleCount > 1 && (
-        <div className="flex items-center justify-center gap-3 pb-2 pt-1">
-          {[...Array(visibleCount)].map((_, i) => (
-            <button
-              key={i}
-              onClick={() => switchMenu(i)}
-              className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold transition-colors ${
-                currentIdx === i
-                  ? "bg-gray-800 text-white"
-                  : i < savedMenus.length
-                  ? "bg-gray-200 text-gray-700"
-                  : "bg-white border border-dashed border-gray-400 text-gray-500"
-              }`}
-            >
-              {i + 1}
-            </button>
-          ))}
-          <span className="text-[10px] text-gray-400 ml-2">
+        <div className="pb-2 pt-1">
+          <div className="flex flex-wrap items-center justify-center gap-1.5 px-2">
+            {[...Array(visibleCount)].map((_, i) => (
+              <button
+                key={i}
+                onClick={() => switchMenu(i)}
+                className={`flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold transition-colors ${
+                  currentIdx === i
+                    ? "bg-gray-800 text-white"
+                    : i < savedMenus.length
+                    ? "bg-gray-200 text-gray-700"
+                    : "bg-white border border-dashed border-gray-400 text-gray-500"
+                }`}
+              >
+                {i + 1}
+              </button>
+            ))}
+          </div>
+          <p className="text-center text-[10px] text-gray-400 mt-1">
             ← スワイプで切替 →
-          </span>
+          </p>
         </div>
       )}
 

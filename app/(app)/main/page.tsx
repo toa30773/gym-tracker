@@ -732,7 +732,7 @@ export default function MainPage() {
                 onClick={() => setProgression(null)}
                 className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold"
               >
-                今回限り
+                現状維持
               </button>
               <button
                 onClick={applyProgression}
