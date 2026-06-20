@@ -561,7 +561,6 @@ export default function SettingsPage() {
           <div className="border border-gray-300 rounded-xl p-3 relative">
             {/* 種目名 + ＋ボタン（同じ部位グループに空種目を追加） + −削除ボタン */}
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-sm">●</span>
               <input
                 type="text"
                 value={ex.name}

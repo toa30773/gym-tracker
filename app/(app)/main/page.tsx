@@ -513,7 +513,6 @@ export default function MainPage() {
 
                             {/* 種目名 + 椅子の高さ */}
                             <div className="flex items-center gap-2 mb-2">
-                              <span className="text-sm">●</span>
                               <div className="bg-gray-200 rounded-full px-3 py-1 text-xs flex-1">
                                 {ex.name}
                               </div>
