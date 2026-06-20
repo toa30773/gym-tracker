@@ -17,7 +17,7 @@ import {
   nowIso,
 } from "@/lib/local-db";
 import { getCurrentUserId, runSync, subscribeSync } from "@/lib/sync";
-import { registerGuard } from "@/lib/nav-guard";
+import { registerGuard, requestNavigation } from "@/lib/nav-guard";
 import ScrollPicker from "@/components/ScrollPicker";
 import type { Menu, Exercise, WorkoutSet, MenuWithExercises } from "@/lib/types";
 import { WEIGHT_STEPS, buildWeightOptions, roundToStep } from "@/lib/types";
@@ -234,15 +234,19 @@ export default function SettingsPage() {
 
   function switchMenu(newIdx: number) {
     if (newIdx < 0 || newIdx >= visibleCount || newIdx === currentIdx) return;
-    setCurrentIdx(newIdx);
-    if (newIdx < savedMenus.length) {
-      loadMenu(savedMenus[newIdx]);
-    } else {
-      const d = defaultMenu(newIdx);
-      setMenuData(d);
-      setBaseline(JSON.stringify(d));
-      setIntervalInput("");
-    }
+    // メニュー切替も BottomNav と同じガードに通す。
+    // 未保存編集ありなら確認モーダル → 保存/破棄 後に切替。
+    requestNavigation(() => {
+      setCurrentIdx(newIdx);
+      if (newIdx < savedMenus.length) {
+        loadMenu(savedMenus[newIdx]);
+      } else {
+        const d = defaultMenu(newIdx);
+        setMenuData(d);
+        setBaseline(JSON.stringify(d));
+        setIntervalInput("");
+      }
+    });
   }
 
   function toggleDay(day: string) {
