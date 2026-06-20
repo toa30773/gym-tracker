@@ -16,6 +16,8 @@ export interface Exercise {
   body_part: string;
   name: string;
   order_index: number;
+  weight_step: number;
+  is_assisted: boolean;
 }
 
 export interface WorkoutSet {
@@ -38,10 +40,36 @@ export interface WeightUpdate {
   updated_at: string;
 }
 
+export interface SetLog {
+  id: string;
+  set_id: string;
+  exercise_id: string;
+  user_id: string;
+  performed_at: string;
+  set_number: number;
+  planned_weight: number;
+  planned_reps: number;
+  actual_weight: number;
+  actual_reps: number;
+  is_assisted: boolean;
+}
+
 export interface ExerciseWithSets extends Exercise {
   sets: WorkoutSet[];
 }
 
 export interface MenuWithExercises extends Menu {
   exercises: ExerciseWithSets[];
+}
+
+export const WEIGHT_STEPS = [0.25, 0.5, 1, 1.25, 2.5, 5] as const;
+export type WeightStep = (typeof WEIGHT_STEPS)[number];
+
+export function buildWeightOptions(step: number, max = 200): number[] {
+  const out: number[] = [];
+  const round = step < 1 ? 2 : 1;
+  for (let w = 0; w <= max + 1e-9; w = +(w + step).toFixed(round)) {
+    out.push(w);
+  }
+  return out;
 }

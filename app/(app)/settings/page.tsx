@@ -4,11 +4,11 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import ScrollPicker from "@/components/ScrollPicker";
 import type { MenuWithExercises, WorkoutSet } from "@/lib/types";
+import { WEIGHT_STEPS, buildWeightOptions } from "@/lib/types";
 
 const BODY_PARTS = ["胸", "背中", "肩", "腕", "脚", "腹", "体幹", "全身"];
 const DAYS = ["月", "火", "水", "木", "金", "土", "日"];
-const WEIGHTS = Array.from({ length: 201 }, (_, i) => +(i * 0.5).toFixed(1));
-const REPS = Array.from({ length: 20 }, (_, i) => i + 1);
+const REPS = Array.from({ length: 30 }, (_, i) => i + 1);
 const MAX_MENUS = 3;
 
 interface SetData {
@@ -24,6 +24,8 @@ interface ExerciseData {
   body_part: string;
   name: string;
   memo: string;
+  weight_step: number;
+  is_assisted: boolean;
   sets: SetData[];
 }
 
@@ -53,6 +55,8 @@ const defaultExercise = (): ExerciseData => ({
   body_part: "胸",
   name: "",
   memo: "",
+  weight_step: 2.5,
+  is_assisted: false,
   sets: [defaultSet(1)],
 });
 
@@ -106,6 +110,8 @@ export default function SettingsPage() {
               body_part: ex.body_part,
               name: ex.name,
               memo: ex.sets[0]?.memo || "",
+              weight_step: ex.weight_step ?? 2.5,
+              is_assisted: ex.is_assisted ?? false,
               sets: ex.sets
                 .sort((a, b) => a.set_number - b.set_number)
                 .map((s: WorkoutSet) => ({
@@ -171,6 +177,8 @@ export default function SettingsPage() {
         body_part: src.body_part,
         name: "",
         memo: "",
+        weight_step: 2.5,
+        is_assisted: false,
         sets: [defaultSet(1)],
       };
       const exercises = [...prev.exercises];
@@ -196,6 +204,8 @@ export default function SettingsPage() {
       body_part: src.body_part,
       name: src.name,
       memo: sortedSets[0]?.memo || "",
+      weight_step: src.weight_step ?? 2.5,
+      is_assisted: src.is_assisted ?? false,
       sets: sortedSets.map((s, i) => ({
         set_number: i + 1,
         weight: s.weight,
@@ -240,7 +250,11 @@ export default function SettingsPage() {
     });
   }
 
-  function updateExercise(exIdx: number, field: keyof ExerciseData, val: string) {
+  function updateExercise<K extends keyof ExerciseData>(
+    exIdx: number,
+    field: K,
+    val: ExerciseData[K]
+  ) {
     setMenuData((prev) => {
       const exercises = [...prev.exercises];
       exercises[exIdx] = { ...exercises[exIdx], [field]: val };
@@ -297,6 +311,8 @@ export default function SettingsPage() {
         body_part: ex.body_part || "胸",
         name: ex.name,
         order_index: i,
+        weight_step: ex.weight_step,
+        is_assisted: ex.is_assisted,
       };
 
       if (!exId) {
@@ -556,6 +572,35 @@ export default function SettingsPage() {
               />
             </div>
 
+            {/* 刻み + アシスト */}
+            <div className="flex items-center gap-2 mb-2 pl-4 flex-wrap">
+              <span className="text-[10px] text-gray-500">刻み</span>
+              {WEIGHT_STEPS.map((step) => (
+                <button
+                  key={step}
+                  onClick={() => updateExercise(exIdx, "weight_step", step)}
+                  className={`px-2 py-0.5 rounded-full text-[10px] border ${
+                    ex.weight_step === step
+                      ? "bg-gray-800 text-white border-gray-800"
+                      : "bg-white text-gray-700 border-gray-300"
+                  }`}
+                >
+                  {step}kg
+                </button>
+              ))}
+              <label className="flex items-center gap-1 ml-1 text-[10px] text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={ex.is_assisted}
+                  onChange={(e) =>
+                    updateExercise(exIdx, "is_assisted", e.target.checked)
+                  }
+                  className="accent-gray-800"
+                />
+                アシスト
+              </label>
+            </div>
+
             {/* セットリスト */}
             {ex.sets.map((s, setIdx) => (
               <div key={setIdx} className="flex items-center gap-1.5 mb-2 pl-4">
@@ -684,7 +729,7 @@ export default function SettingsPage() {
             <ScrollPicker
               items={
                 picker.field === "weight"
-                  ? WEIGHTS
+                  ? buildWeightOptions(menuData.exercises[picker.exIdx].weight_step)
                   : picker.field === "reps"
                   ? REPS
                   : BODY_PARTS

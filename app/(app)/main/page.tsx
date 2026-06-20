@@ -21,6 +21,40 @@ interface WeightModal {
   oldWeight: number;
   newWeight: number;
   exerciseName: string;
+  step: number;
+  isAssisted: boolean;
+}
+
+interface ActualRow {
+  set_id: string;
+  set_number: number;
+  planned_weight: number;
+  planned_reps: number;
+  actual_weight: number;
+  actual_reps: number;
+}
+
+interface ActualsModal {
+  exerciseId: string;
+  exerciseName: string;
+  isAssisted: boolean;
+  weightStep: number;
+  rows: ActualRow[];
+}
+
+interface ProgressionSuggestion {
+  exerciseName: string;
+  isAssisted: boolean;
+  step: number;
+  updates: { setId: string; newWeight: number }[];
+}
+
+function formatWeight(weight: number, isAssisted: boolean): string {
+  return isAssisted ? `補助 ${weight}kg` : `${weight}kg`;
+}
+
+function roundStep(value: number, step: number): number {
+  return +value.toFixed(step < 1 ? 2 : 1);
 }
 
 function isMenuActiveToday(menu: Menu): boolean {
@@ -55,6 +89,8 @@ export default function MainPage() {
   const [savingMemo, setSavingMemo] = useState<string | null>(null);
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
   const [revealedId, setRevealedId] = useState<string | null>(null);
+  const [actualsModal, setActualsModal] = useState<ActualsModal | null>(null);
+  const [progression, setProgression] = useState<ProgressionSuggestion | null>(null);
   const swipeStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
   const lastDateRef = useRef<string>(todayKey());
 
@@ -200,12 +236,16 @@ export default function MainPage() {
     };
   }, [syncDay, fetchTodayMenu]);
 
-  function openWeightModal(s: WorkoutSet, exerciseName: string) {
+  function openWeightModal(s: WorkoutSet, exercise: ExerciseWithSets) {
+    const step = exercise.weight_step ?? 2.5;
+    const direction = exercise.is_assisted ? -1 : 1;
     setModal({
       setId: s.id,
       oldWeight: s.weight,
-      newWeight: +(s.weight + 0.5).toFixed(1),
-      exerciseName,
+      newWeight: Math.max(0, roundStep(s.weight + step * direction, step)),
+      exerciseName: exercise.name,
+      step,
+      isAssisted: exercise.is_assisted,
     });
   }
 
@@ -235,7 +275,10 @@ export default function MainPage() {
 
   async function saveWeightUpdate() {
     if (!modal) return;
-    if (modal.newWeight <= modal.oldWeight) return;
+    const isImprovement = modal.isAssisted
+      ? modal.newWeight < modal.oldWeight
+      : modal.newWeight > modal.oldWeight;
+    if (!isImprovement) return;
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -264,7 +307,7 @@ export default function MainPage() {
     await fetchTodayMenu();
   }
 
-  function markCompleted(exerciseId: string) {
+  function addCompleted(exerciseId: string) {
     setCompletedIds((prev) => {
       const next = new Set(prev);
       next.add(exerciseId);
@@ -276,7 +319,99 @@ export default function MainPage() {
       } catch {}
       return next;
     });
+  }
+
+  function startComplete(exercise: ExerciseWithSets) {
+    setActualsModal({
+      exerciseId: exercise.id,
+      exerciseName: exercise.name,
+      isAssisted: exercise.is_assisted,
+      weightStep: exercise.weight_step ?? 2.5,
+      rows: exercise.sets.map((s) => ({
+        set_id: s.id,
+        set_number: s.set_number,
+        planned_weight: s.weight,
+        planned_reps: s.reps,
+        actual_weight: s.weight,
+        actual_reps: s.reps,
+      })),
+    });
     setRevealedId(null);
+  }
+
+  function updateActualRow(idx: number, field: "actual_weight" | "actual_reps", val: number) {
+    setActualsModal((prev) => {
+      if (!prev) return prev;
+      const rows = prev.rows.map((r, i) => (i === idx ? { ...r, [field]: val } : r));
+      return { ...prev, rows };
+    });
+  }
+
+  async function saveActuals() {
+    if (!actualsModal) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const payload = actualsModal.rows.map((r) => ({
+      set_id: r.set_id,
+      exercise_id: actualsModal.exerciseId,
+      user_id: user.id,
+      set_number: r.set_number,
+      planned_weight: r.planned_weight,
+      planned_reps: r.planned_reps,
+      actual_weight: r.actual_weight,
+      actual_reps: r.actual_reps,
+      is_assisted: actualsModal.isAssisted,
+    }));
+
+    const { error } = await supabase.from("set_logs").insert(payload);
+    if (error) {
+      console.error("実績の保存に失敗しました", error);
+      return;
+    }
+
+    addCompleted(actualsModal.exerciseId);
+
+    // 全セットで予定以上達成 → 進歩提案
+    const allHit = actualsModal.rows.every((r) => {
+      const repsOk = r.actual_reps >= r.planned_reps;
+      const weightOk = actualsModal.isAssisted
+        ? r.actual_weight <= r.planned_weight
+        : r.actual_weight >= r.planned_weight;
+      return repsOk && weightOk;
+    });
+
+    if (allHit) {
+      const direction = actualsModal.isAssisted ? -1 : 1;
+      const step = actualsModal.weightStep;
+      const updates = actualsModal.rows.map((r) => ({
+        setId: r.set_id,
+        newWeight: Math.max(0, roundStep(r.actual_weight + step * direction, step)),
+      }));
+      setProgression({
+        exerciseName: actualsModal.exerciseName,
+        isAssisted: actualsModal.isAssisted,
+        step,
+        updates,
+      });
+    }
+
+    setActualsModal(null);
+  }
+
+  async function applyProgression() {
+    if (!progression) return;
+    for (const u of progression.updates) {
+      const { error } = await supabase
+        .from("sets")
+        .update({ weight: u.newWeight })
+        .eq("id", u.setId);
+      if (error) {
+        console.error("計画値の更新に失敗しました", error);
+      }
+    }
+    setProgression(null);
+    await fetchTodayMenu();
   }
 
   function handleSwipeStart(e: React.TouchEvent, exId: string) {
@@ -375,9 +510,9 @@ export default function MainPage() {
                   return (
                     <div key={ex.id}>
                       <div className="relative overflow-hidden">
-                        {/* 完了ボタン（背面） */}
+                        {/* 完了ボタン（背面）→ 実績入力モーダルを開く */}
                         <button
-                          onClick={() => markCompleted(ex.id)}
+                          onClick={() => startComplete(ex)}
                           className="absolute right-0 top-0 bottom-0 w-20 flex items-center justify-center bg-emerald-500 text-white text-sm font-bold"
                         >
                           完了
@@ -427,13 +562,13 @@ export default function MainPage() {
                                   {s.set_number}
                                 </div>
                                 <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
-                                  {s.weight}kg
+                                  {formatWeight(s.weight, ex.is_assisted)}
                                 </div>
                                 <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
                                   {s.reps}回
                                 </div>
                                 <button
-                                  onClick={() => openWeightModal(s, ex.name)}
+                                  onClick={() => openWeightModal(s, ex)}
                                   className="px-2 py-1 bg-gray-300 rounded-full text-xs font-bold whitespace-nowrap"
                                 >
                                   重量更新
@@ -513,46 +648,54 @@ export default function MainPage() {
           >
             <p className="text-center text-sm font-bold mb-1">{modal.exerciseName}</p>
             <p className="text-center text-xs text-gray-500 mb-3">
-              現在: {modal.oldWeight}kg → 新しい重量を選択
+              現在: {formatWeight(modal.oldWeight, modal.isAssisted)} → 新しい値を選択（{modal.step}kg刻み）
             </p>
             <div className="flex items-center gap-4">
               <div className="flex-1">
                 <div className="flex items-center gap-2 justify-center">
+                  {/* − ボタン: 強くなる方向の逆 = 数値で言うと normal なら下げ、assist なら上げ */}
                   <button
                     className="w-10 h-10 bg-gray-200 rounded-full text-xl font-bold disabled:opacity-30"
-                    disabled={modal.newWeight - 0.5 <= modal.oldWeight}
+                    disabled={(() => {
+                      const delta = modal.isAssisted ? -modal.step : modal.step;
+                      const next = roundStep(modal.newWeight - delta, modal.step);
+                      return modal.isAssisted ? next >= modal.oldWeight : next <= modal.oldWeight;
+                    })()}
                     onClick={() =>
-                      setModal((m) =>
-                        m
-                          ? {
-                              ...m,
-                              newWeight: Math.max(
-                                +(m.oldWeight + 0.5).toFixed(1),
-                                +(m.newWeight - 0.5).toFixed(1)
-                              ),
-                            }
-                          : m
-                      )
+                      setModal((m) => {
+                        if (!m) return m;
+                        const delta = m.isAssisted ? -m.step : m.step;
+                        const next = roundStep(m.newWeight - delta, m.step);
+                        return { ...m, newWeight: Math.max(0, next) };
+                      })
                     }
                   >
                     −
                   </button>
-                  <span className="text-2xl font-bold w-24 text-center">
-                    {modal.newWeight}<span className="text-sm ml-1">kg</span>
+                  <span className="text-2xl font-bold w-32 text-center">
+                    {modal.isAssisted && <span className="text-xs mr-1">補助</span>}
+                    {modal.newWeight}
+                    <span className="text-sm ml-1">kg</span>
                   </span>
+                  {/* ＋ ボタン: 強くなる方向 = normal なら上げ、assist なら下げ */}
                   <button
                     className="w-10 h-10 bg-gray-200 rounded-full text-xl font-bold"
                     onClick={() =>
-                      setModal((m) =>
-                        m ? { ...m, newWeight: +(m.newWeight + 0.5).toFixed(1) } : m
-                      )
+                      setModal((m) => {
+                        if (!m) return m;
+                        const delta = m.isAssisted ? -m.step : m.step;
+                        const next = roundStep(m.newWeight + delta, m.step);
+                        return { ...m, newWeight: Math.max(0, next) };
+                      })
                     }
                   >
                     ＋
                   </button>
                 </div>
                 <p className="text-center text-[10px] text-gray-400 mt-2">
-                  ※ 現在の重量より大きい値のみ選択可能
+                  {modal.isAssisted
+                    ? "※ 補助を軽くする方向のみ更新可能"
+                    : "※ 現在の重量より大きい値のみ選択可能"}
                 </p>
               </div>
             </div>
@@ -565,10 +708,149 @@ export default function MainPage() {
               </button>
               <button
                 onClick={saveWeightUpdate}
-                disabled={modal.newWeight <= modal.oldWeight}
+                disabled={
+                  modal.isAssisted
+                    ? modal.newWeight >= modal.oldWeight
+                    : modal.newWeight <= modal.oldWeight
+                }
                 className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold disabled:opacity-50"
               >
                 更新する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 実績入力モーダル */}
+      {actualsModal && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-end"
+          onClick={() => setActualsModal(null)}
+        >
+          <div
+            className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-4 pb-8 max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-center text-sm font-bold mb-1">
+              {actualsModal.exerciseName} の実績
+            </p>
+            <p className="text-center text-[10px] text-gray-500 mb-3">
+              予定通りなら何もしないで「記録して完了」を押してください
+            </p>
+
+            {actualsModal.rows.map((row, idx) => (
+              <div key={row.set_id} className="mb-3 p-2 bg-gray-50 rounded-xl">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="flex items-center justify-center w-5 h-5 bg-gray-300 rounded text-[10px] font-bold">
+                    {row.set_number}
+                  </div>
+                  <span className="text-[10px] text-gray-500">
+                    予定 {formatWeight(row.planned_weight, actualsModal.isAssisted)} × {row.planned_reps}回
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 pl-7">
+                  {/* 実重量 */}
+                  <button
+                    className="w-7 h-7 bg-gray-200 rounded-full text-base font-bold leading-none"
+                    onClick={() =>
+                      updateActualRow(
+                        idx,
+                        "actual_weight",
+                        Math.max(0, roundStep(row.actual_weight - actualsModal.weightStep, actualsModal.weightStep))
+                      )
+                    }
+                  >
+                    −
+                  </button>
+                  <span className="min-w-[64px] text-center text-xs font-bold">
+                    {row.actual_weight}kg
+                  </span>
+                  <button
+                    className="w-7 h-7 bg-gray-200 rounded-full text-base font-bold leading-none"
+                    onClick={() =>
+                      updateActualRow(
+                        idx,
+                        "actual_weight",
+                        roundStep(row.actual_weight + actualsModal.weightStep, actualsModal.weightStep)
+                      )
+                    }
+                  >
+                    ＋
+                  </button>
+                  <span className="mx-1 text-xs">×</span>
+                  {/* 実レップ */}
+                  <button
+                    className="w-7 h-7 bg-gray-200 rounded-full text-base font-bold leading-none"
+                    onClick={() =>
+                      updateActualRow(idx, "actual_reps", Math.max(0, row.actual_reps - 1))
+                    }
+                  >
+                    −
+                  </button>
+                  <span className="min-w-[40px] text-center text-xs font-bold">
+                    {row.actual_reps}回
+                  </span>
+                  <button
+                    className="w-7 h-7 bg-gray-200 rounded-full text-base font-bold leading-none"
+                    onClick={() =>
+                      updateActualRow(idx, "actual_reps", row.actual_reps + 1)
+                    }
+                  >
+                    ＋
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => setActualsModal(null)}
+                className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={saveActuals}
+                className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
+              >
+                記録して完了
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 進歩提案モーダル */}
+      {progression && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-end"
+          onClick={() => setProgression(null)}
+        >
+          <div
+            className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-5 pb-8"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-center text-base font-bold mb-1">
+              🎉 {progression.exerciseName} 全セット達成！
+            </p>
+            <p className="text-center text-xs text-gray-600 mb-4">
+              {progression.isAssisted
+                ? `次回は補助を ${progression.step}kg 軽くしてみますか？`
+                : `次回は +${progression.step}kg にしてみますか？`}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setProgression(null)}
+                className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold"
+              >
+                今回限り
+              </button>
+              <button
+                onClick={applyProgression}
+                className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
+              >
+                計画に反映
               </button>
             </div>
           </div>
