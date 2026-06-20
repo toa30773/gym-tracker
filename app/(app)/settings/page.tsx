@@ -41,6 +41,7 @@ interface ExerciseData {
   name: string;
   memo: string;
   weight_step: number;
+  weight_min: number;
   is_assisted: boolean;
   sets: SetData[];
 }
@@ -78,6 +79,7 @@ const defaultExercise = (): ExerciseData => ({
   name: "",
   memo: "",
   weight_step: 2.5,
+  weight_min: 0,
   is_assisted: false,
   // セットが1つのとき = それがトップ。比率は null（直接重量指定）
   sets: [defaultSet(1, null)],
@@ -129,6 +131,7 @@ export default function SettingsPage() {
               name: ex.name,
               memo: ex.sets[0]?.memo || "",
               weight_step: ex.weight_step ?? 2.5,
+              weight_min: ex.weight_min ?? 0,
               is_assisted: ex.is_assisted ?? false,
               sets: ex.sets
                 .sort((a, b) => a.set_number - b.set_number)
@@ -228,6 +231,7 @@ export default function SettingsPage() {
         name: "",
         memo: "",
         weight_step: 2.5,
+        weight_min: 0,
         is_assisted: false,
         sets: [defaultSet(1, null)],
       };
@@ -255,6 +259,7 @@ export default function SettingsPage() {
       name: src.name,
       memo: sortedSets[0]?.memo || "",
       weight_step: src.weight_step ?? 2.5,
+      weight_min: src.weight_min ?? 0,
       is_assisted: src.is_assisted ?? false,
       sets: sortedSets.map((s, i) => ({
         set_number: i + 1,
@@ -394,6 +399,7 @@ export default function SettingsPage() {
           name: ex.name,
           order_index: i,
           weight_step: ex.weight_step,
+          weight_min: ex.weight_min,
           is_assisted: ex.is_assisted,
         };
 
@@ -686,6 +692,24 @@ export default function SettingsPage() {
               </label>
             </div>
 
+            {/* 重量の開始値（マシンの最小重量に合わせる） */}
+            <div className="flex items-center gap-2 mb-2 pl-4">
+              <span className="text-[10px] text-gray-500">開始</span>
+              {[0, 5].map((min) => (
+                <button
+                  key={min}
+                  onClick={() => updateExercise(exIdx, "weight_min", min)}
+                  className={`px-2 py-0.5 rounded-full text-[10px] border ${
+                    ex.weight_min === min
+                      ? "bg-gray-800 text-white border-gray-800"
+                      : "bg-white text-gray-700 border-gray-300"
+                  }`}
+                >
+                  {min}kg〜
+                </button>
+              ))}
+            </div>
+
             {/* セットリスト：末尾がトップ、それ以外は「トップの%」で表示・編集 */}
             {ex.sets.map((s, setIdx) => {
               const isTop = setIdx === ex.sets.length - 1;
@@ -862,7 +886,11 @@ export default function SettingsPage() {
             <ScrollPicker
               items={
                 picker.field === "weight"
-                  ? buildWeightOptions(menuData.exercises[picker.exIdx].weight_step)
+                  ? buildWeightOptions(
+                      menuData.exercises[picker.exIdx].weight_step,
+                      undefined,
+                      menuData.exercises[picker.exIdx].weight_min
+                    )
                   : picker.field === "reps"
                   ? REPS
                   : picker.field === "ratio"

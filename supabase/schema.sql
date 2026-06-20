@@ -29,6 +29,8 @@ create table if not exists exercises (
 -- 既存テーブルへのマイグレーション
 alter table exercises add column if not exists weight_step numeric not null default 2.5;
 alter table exercises add column if not exists is_assisted boolean not null default false;
+-- 重量ピッカーの開始値（0 or 5 など）。マシンによっては最小重量が 0 でない種目向け
+alter table exercises add column if not exists weight_min numeric not null default 0;
 
 -- セット（種目内）
 create table if not exists sets (

@@ -18,6 +18,7 @@ export interface Exercise {
   order_index: number;
   weight_step: number;
   is_assisted: boolean;
+  weight_min: number;
 }
 
 export interface WorkoutSet {
@@ -79,13 +80,14 @@ export function roundToStep(value: number, step: number): number {
   return +value.toFixed(stepDecimals(step));
 }
 
-export function buildWeightOptions(step: number, max = 200): number[] {
+export function buildWeightOptions(step: number, max = 200, min = 0): number[] {
   const d = stepDecimals(step);
   const factor = Math.pow(10, d);
   const stepN = Math.round(step * factor);
   const maxN = Math.round(max * factor);
+  const minN = Math.round(min * factor);
   const out: number[] = [];
-  for (let n = 0; n <= maxN; n += stepN) {
+  for (let n = minN; n <= maxN; n += stepN) {
     out.push(+(n / factor).toFixed(d));
   }
   return out;
