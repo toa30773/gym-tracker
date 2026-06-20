@@ -748,9 +748,26 @@ export default function MainPage() {
                   >
                     −
                   </button>
-                  <span className="min-w-[64px] text-center text-xs font-bold">
-                    {row.actual_weight}kg
-                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step={actualsModal.weightStep}
+                    value={Number.isFinite(row.actual_weight) ? row.actual_weight : 0}
+                    onChange={(e) => {
+                      const str = e.target.value;
+                      if (str === "") {
+                        updateActualRow(idx, "actual_weight", 0);
+                        return;
+                      }
+                      const v = parseFloat(str);
+                      if (Number.isFinite(v) && v >= 0) {
+                        updateActualRow(idx, "actual_weight", v);
+                      }
+                    }}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="min-w-[64px] w-16 text-center text-xs font-bold bg-gray-100 rounded outline-none"
+                  />
                   <button
                     className="w-7 h-7 bg-gray-200 rounded-full text-base font-bold leading-none"
                     onClick={() =>

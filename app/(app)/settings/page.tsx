@@ -20,7 +20,7 @@ import { getCurrentUserId, runSync, subscribeSync } from "@/lib/sync";
 import { registerGuard, requestNavigation } from "@/lib/nav-guard";
 import ScrollPicker from "@/components/ScrollPicker";
 import type { Menu, Exercise, WorkoutSet, MenuWithExercises } from "@/lib/types";
-import { WEIGHT_STEPS, buildWeightOptions, roundToStep } from "@/lib/types";
+import { WEIGHT_STEPS, roundToStep } from "@/lib/types";
 
 const BODY_PARTS = ["胸", "背中", "肩", "腕", "脚", "腹", "体幹", "全身"];
 const DAYS = ["月", "火", "水", "木", "金", "土", "日"];
@@ -60,7 +60,6 @@ interface ExerciseData {
   name: string;
   memo: string;
   weight_step: number;
-  weight_min: number;
   is_assisted: boolean;
   sets: SetData[];
 }
@@ -98,7 +97,6 @@ const defaultExercise = (): ExerciseData => ({
   name: "",
   memo: "",
   weight_step: 2.5,
-  weight_min: 0,
   is_assisted: false,
   // セットが1つのとき = それがトップ。比率は null（直接重量指定）
   sets: [defaultSet(1, null)],
@@ -162,7 +160,6 @@ export default function SettingsPage() {
               name: ex.name,
               memo: ex.sets[0]?.memo || "",
               weight_step: ex.weight_step ?? 2.5,
-              weight_min: ex.weight_min ?? 0,
               is_assisted: ex.is_assisted ?? false,
               sets: ex.sets
                 .sort((a, b) => a.set_number - b.set_number)
@@ -320,7 +317,6 @@ export default function SettingsPage() {
         name: "",
         memo: "",
         weight_step: 2.5,
-        weight_min: 0,
         is_assisted: false,
         sets: [defaultSet(1, null)],
       };
@@ -348,7 +344,6 @@ export default function SettingsPage() {
       name: src.name,
       memo: sortedSets[0]?.memo || "",
       weight_step: src.weight_step ?? 2.5,
-      weight_min: src.weight_min ?? 0,
       is_assisted: src.is_assisted ?? false,
       sets: sortedSets.map((s, i) => ({
         set_number: i + 1,
@@ -528,7 +523,6 @@ export default function SettingsPage() {
           name: ex.name,
           order_index: i,
           weight_step: ex.weight_step,
-          weight_min: ex.weight_min,
           is_assisted: ex.is_assisted,
         };
 
@@ -840,24 +834,6 @@ export default function SettingsPage() {
               </label>
             </div>
 
-            {/* 重量の開始値（マシンの最小重量に合わせる） */}
-            <div className="flex items-center gap-2 mb-2 pl-4">
-              <span className="text-[10px] text-gray-500">開始</span>
-              {[0, 5].map((min) => (
-                <button
-                  key={min}
-                  onClick={() => updateExercise(exIdx, "weight_min", min)}
-                  className={`px-2 py-0.5 rounded-full text-[10px] border ${
-                    ex.weight_min === min
-                      ? "bg-gray-800 text-white border-gray-800"
-                      : "bg-white text-gray-700 border-gray-300"
-                  }`}
-                >
-                  {min}kg〜
-                </button>
-              ))}
-            </div>
-
             {/* セットリスト：末尾がトップ、それ以外は「トップの%」で表示・編集 */}
             {ex.sets.map((s, setIdx) => {
               const isTop = setIdx === ex.sets.length - 1;
@@ -1019,7 +995,9 @@ export default function SettingsPage() {
           actionBarSlot,
         )}
 
-      {/* スクロールピッカーモーダル */}
+      {/* 重量／レップ／部位／比率 入力モーダル
+          weight だけテンキー入力＋±（マシン固有の不規則ステップに対応）。
+          他は従来通り ScrollPicker。 */}
       {picker && (
         <div
           className="fixed inset-0 bg-black/40 z-50 flex items-end"
@@ -1029,51 +1007,105 @@ export default function SettingsPage() {
             className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-4 pb-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-center text-xs font-bold mb-2">
+            <p className="text-center text-xs font-bold mb-3">
               {picker.field === "weight"
-                ? "トップ重量を選択（kg）"
+                ? "トップ重量を入力（kg）"
                 : picker.field === "reps"
                 ? "レップ数を選択"
                 : picker.field === "ratio"
                 ? "トップに対する％を選択"
                 : "部位を選択"}
             </p>
-            <ScrollPicker
-              items={
-                picker.field === "weight"
-                  ? buildWeightOptions(
-                      menuData.exercises[picker.exIdx].weight_step,
-                      undefined,
-                      menuData.exercises[picker.exIdx].weight_min
-                    )
-                  : picker.field === "reps"
-                  ? REPS
-                  : picker.field === "ratio"
-                  ? RATIO_PCT_OPTIONS
-                  : BODY_PARTS
-              }
-              value={
-                picker.field === "weight"
-                  ? menuData.exercises[picker.exIdx].sets[picker.setIdx].weight
-                  : picker.field === "reps"
-                  ? menuData.exercises[picker.exIdx].sets[picker.setIdx].reps
-                  : picker.field === "ratio"
-                  ? Math.round(
-                      ((menuData.exercises[picker.exIdx].sets[picker.setIdx]
-                        .backoff_ratio ?? 1.0) as number) * 100
-                    )
-                  : menuData.exercises[picker.exIdx].body_part
-              }
-              onChange={(val) => {
-                if (picker.field === "body_part") {
-                  updateExercise(picker.exIdx, "body_part", String(val));
-                } else if (picker.field === "ratio") {
-                  updateSet(picker.exIdx, picker.setIdx, "backoff_ratio", (val as number) / 100);
-                } else {
-                  updateSet(picker.exIdx, picker.setIdx, picker.field, val as number);
+            {picker.field === "weight" ? (() => {
+              const ex = menuData.exercises[picker.exIdx];
+              const set = ex.sets[picker.setIdx];
+              const step = ex.weight_step;
+              return (
+                <div className="flex items-center justify-center gap-3 mb-2">
+                  <button
+                    onClick={() =>
+                      updateSet(
+                        picker.exIdx,
+                        picker.setIdx,
+                        "weight",
+                        Math.max(0, roundToStep(set.weight - step, step)),
+                      )
+                    }
+                    className="w-12 h-12 bg-gray-200 rounded-full text-2xl font-bold leading-none"
+                  >
+                    −
+                  </button>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step={step}
+                    value={Number.isFinite(set.weight) ? set.weight : 0}
+                    onChange={(e) => {
+                      const str = e.target.value;
+                      if (str === "") {
+                        updateSet(picker.exIdx, picker.setIdx, "weight", 0);
+                        return;
+                      }
+                      const v = parseFloat(str);
+                      if (Number.isFinite(v) && v >= 0) {
+                        updateSet(picker.exIdx, picker.setIdx, "weight", v);
+                      }
+                    }}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="w-32 text-center text-2xl font-bold bg-gray-100 rounded-xl py-2 outline-none"
+                  />
+                  <span className="text-sm">kg</span>
+                  <button
+                    onClick={() =>
+                      updateSet(
+                        picker.exIdx,
+                        picker.setIdx,
+                        "weight",
+                        roundToStep(set.weight + step, step),
+                      )
+                    }
+                    className="w-12 h-12 bg-gray-200 rounded-full text-2xl font-bold leading-none"
+                  >
+                    ＋
+                  </button>
+                </div>
+              );
+            })() : (
+              <ScrollPicker
+                items={
+                  picker.field === "reps"
+                    ? REPS
+                    : picker.field === "ratio"
+                    ? RATIO_PCT_OPTIONS
+                    : BODY_PARTS
                 }
-              }}
-            />
+                value={
+                  picker.field === "reps"
+                    ? menuData.exercises[picker.exIdx].sets[picker.setIdx].reps
+                    : picker.field === "ratio"
+                    ? Math.round(
+                        ((menuData.exercises[picker.exIdx].sets[picker.setIdx]
+                          .backoff_ratio ?? 1.0) as number) * 100,
+                      )
+                    : menuData.exercises[picker.exIdx].body_part
+                }
+                onChange={(val) => {
+                  if (picker.field === "body_part") {
+                    updateExercise(picker.exIdx, "body_part", String(val));
+                  } else if (picker.field === "ratio") {
+                    updateSet(
+                      picker.exIdx,
+                      picker.setIdx,
+                      "backoff_ratio",
+                      (val as number) / 100,
+                    );
+                  } else {
+                    updateSet(picker.exIdx, picker.setIdx, picker.field, val as number);
+                  }
+                }}
+              />
+            )}
             <button
               onClick={() => setPicker(null)}
               className="w-full mt-3 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
