@@ -70,8 +70,12 @@ create table if not exists set_logs (
   planned_reps int not null,
   actual_weight numeric not null,
   actual_reps int not null,
-  is_assisted boolean not null default false
+  is_assisted boolean not null default false,
+  rir int
 );
+
+-- 既存テーブルへの追加（再実行可）
+alter table set_logs add column if not exists rir int;
 
 create index if not exists set_logs_user_performed_idx on set_logs(user_id, performed_at desc);
 create index if not exists set_logs_exercise_id_idx on set_logs(exercise_id);

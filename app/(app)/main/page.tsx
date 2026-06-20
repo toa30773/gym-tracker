@@ -20,11 +20,14 @@ interface ActualsModal {
   isAssisted: boolean;
   weightStep: number;
   rows: ActualRow[];
+  rir: number | null; // 最終セットの余裕度（あと何回いけたか）。null=未入力
 }
 
 interface ProgressionSuggestion {
   exerciseName: string;
   isAssisted: boolean;
+  reason: string;
+  delta: number; // 強くなる方向のステップ倍率（+2=大幅up, +1=up, 0=据え置き, -1=down）
   step: number;
   updates: { setId: string; oldWeight: number; newWeight: number }[];
 }
@@ -277,6 +280,7 @@ export default function MainPage() {
         actual_weight: s.weight,
         actual_reps: s.reps,
       })),
+      rir: null,
     });
     setRevealedId(null);
   }
@@ -310,6 +314,7 @@ export default function MainPage() {
         actual_weight: r.actual_weight,
         actual_reps: r.actual_reps,
         is_assisted: actualsModal.isAssisted,
+        rir: actualsModal.rir,
       }));
 
       const { error } = await supabase.from("set_logs").insert(payload);
@@ -322,30 +327,77 @@ export default function MainPage() {
 
       addCompleted(actualsModal.exerciseId);
 
-      // 全セットで予定以上達成 → 進歩提案
+      // 5パターン進歩判定
+      const isAssisted = actualsModal.isAssisted;
       const allHit = actualsModal.rows.every((r) => {
         const repsOk = r.actual_reps >= r.planned_reps;
-        const weightOk = actualsModal.isAssisted
+        const weightOk = isAssisted
           ? r.actual_weight <= r.planned_weight
           : r.actual_weight >= r.planned_weight;
         return repsOk && weightOk;
       });
+      const worstDeficit = Math.max(
+        0,
+        ...actualsModal.rows.map((r) => r.planned_reps - r.actual_reps)
+      );
+      const rir = actualsModal.rir;
+
+      let delta = 0;
+      let reason = "";
 
       if (allHit) {
-        const direction = actualsModal.isAssisted ? -1 : 1;
-        const step = actualsModal.weightStep;
-        const updates = actualsModal.rows.map((r) => ({
-          setId: r.set_id,
-          oldWeight: r.planned_weight,
-          newWeight: Math.max(0, roundToStep(r.actual_weight + step * direction, step)),
-        }));
-        setProgression({
-          exerciseName: actualsModal.exerciseName,
-          isAssisted: actualsModal.isAssisted,
-          step,
-          updates,
-        });
+        if (rir !== null && rir >= 3) {
+          delta = 2;
+          reason = "余裕で達成（最終セットでまだ3回以上いけた）。大幅にアップできます";
+        } else if (rir === 0) {
+          delta = 0;
+          reason = "ギリギリ達成（限界まで挙げきった）。今週は同重量で安定させましょう";
+        } else {
+          delta = 1;
+          reason =
+            rir === null
+              ? "全セット予定通り達成"
+              : `全セット予定通り達成（残り${rir}回程度の余裕）`;
+        }
+      } else {
+        if (worstDeficit >= 3) {
+          delta = -1;
+          reason = `下限未達（最大 ${worstDeficit} 回不足）。重量を下げて再挑戦しましょう`;
+        } else {
+          delta = 0;
+          const failed = actualsModal.rows
+            .filter((r) => r.actual_reps < r.planned_reps)
+            .map((r) => `セット${r.set_number}で${r.planned_reps - r.actual_reps}回不足`)
+            .join("、");
+          reason =
+            failed.length > 0
+              ? `一部未達（${failed}）。来週は据え置きで再挑戦しましょう`
+              : "一部未達。来週は据え置きで再挑戦しましょう";
+        }
       }
+
+      const direction = isAssisted ? -1 : 1;
+      const step = actualsModal.weightStep;
+      const updates =
+        delta === 0
+          ? []
+          : actualsModal.rows.map((r) => ({
+              setId: r.set_id,
+              oldWeight: r.planned_weight,
+              newWeight: Math.max(
+                0,
+                roundToStep(r.actual_weight + delta * step * direction, step)
+              ),
+            }));
+
+      setProgression({
+        exerciseName: actualsModal.exerciseName,
+        isAssisted,
+        reason,
+        delta,
+        step,
+        updates,
+      });
 
       setActualsModal(null);
     } finally {
@@ -679,6 +731,39 @@ export default function MainPage() {
               </div>
             ))}
 
+            {/* RIR (あと何回いけた？) */}
+            <div className="mb-3 p-3 bg-gray-50 rounded-xl">
+              <p className="text-[10px] text-gray-600 mb-2">
+                最終セットでまだあと何回いけた？（任意・スキップ可）
+              </p>
+              <div className="flex gap-1.5">
+                {[
+                  { v: 0, label: "0" },
+                  { v: 1, label: "1" },
+                  { v: 2, label: "2" },
+                  { v: 3, label: "3+" },
+                ].map((opt) => (
+                  <button
+                    key={opt.v}
+                    onClick={() =>
+                      setActualsModal((prev) =>
+                        prev
+                          ? { ...prev, rir: prev.rir === opt.v ? null : opt.v }
+                          : prev
+                      )
+                    }
+                    className={`flex-1 py-1.5 rounded-full text-xs font-bold border ${
+                      actualsModal.rir === opt.v
+                        ? "bg-gray-800 text-white border-gray-800"
+                        : "bg-white text-gray-700 border-gray-300"
+                    }`}
+                  >
+                    {opt.label}回
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {saveError && (
               <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded-lg text-[10px] text-red-700 whitespace-pre-wrap">
                 {saveError}
@@ -718,27 +803,55 @@ export default function MainPage() {
             className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-5 pb-8"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-center text-base font-bold mb-1">
-              🎉 {progression.exerciseName} 全セット達成！
+            <p className="text-center text-base font-bold mb-2">
+              {progression.exerciseName}
             </p>
-            <p className="text-center text-xs text-gray-600 mb-4">
-              {progression.isAssisted
-                ? `次回は補助を ${progression.step}kg 軽くしてみますか？`
-                : `次回は +${progression.step}kg にしてみますか？`}
+            {progression.delta !== 0 && (
+              <p className="text-center text-lg font-bold mb-1">
+                {(() => {
+                  const absDelta = Math.abs(progression.delta);
+                  const totalKg = +(absDelta * progression.step).toFixed(2);
+                  if (progression.isAssisted) {
+                    return progression.delta > 0
+                      ? `次回は補助 -${totalKg}kg で挑戦`
+                      : `次回は補助 +${totalKg}kg に戻す`;
+                  }
+                  return progression.delta > 0
+                    ? `次回は +${totalKg}kg で挑戦`
+                    : `次回は -${totalKg}kg に下げる`;
+                })()}
+              </p>
+            )}
+            {progression.delta === 0 && (
+              <p className="text-center text-lg font-bold mb-1">据え置き推奨</p>
+            )}
+            <p className="text-center text-xs text-gray-600 mb-4 px-2">
+              {progression.reason}
             </p>
             <div className="flex gap-2">
-              <button
-                onClick={() => setProgression(null)}
-                className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold"
-              >
-                現状維持
-              </button>
-              <button
-                onClick={applyProgression}
-                className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
-              >
-                計画に反映
-              </button>
+              {progression.delta !== 0 ? (
+                <>
+                  <button
+                    onClick={() => setProgression(null)}
+                    className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold"
+                  >
+                    現状維持
+                  </button>
+                  <button
+                    onClick={applyProgression}
+                    className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
+                  >
+                    計画に反映
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => setProgression(null)}
+                  className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
+                >
+                  OK
+                </button>
+              )}
             </div>
           </div>
         </div>

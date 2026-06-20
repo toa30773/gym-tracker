@@ -52,6 +52,7 @@ export interface SetLog {
   actual_weight: number;
   actual_reps: number;
   is_assisted: boolean;
+  rir: number | null;
 }
 
 export interface ExerciseWithSets extends Exercise {
