@@ -5,27 +5,6 @@ import { createClient } from "@/lib/supabase/client";
 import type { Menu, MenuWithExercises, ExerciseWithSets, WorkoutSet } from "@/lib/types";
 import { roundToStep } from "@/lib/types";
 
-const DAY_MAP: Record<number, string> = {
-  0: "日",
-  1: "月",
-  2: "火",
-  3: "水",
-  4: "木",
-  5: "金",
-  6: "土",
-};
-
-const COMPLETED_KEY_PREFIX = "completed-exercises-";
-
-interface WeightModal {
-  setId: string;
-  oldWeight: number;
-  newWeight: number;
-  exerciseName: string;
-  step: number;
-  isAssisted: boolean;
-}
-
 interface ActualRow {
   set_id: string;
   set_number: number;
@@ -47,8 +26,20 @@ interface ProgressionSuggestion {
   exerciseName: string;
   isAssisted: boolean;
   step: number;
-  updates: { setId: string; newWeight: number }[];
+  updates: { setId: string; oldWeight: number; newWeight: number }[];
 }
+
+const DAY_MAP: Record<number, string> = {
+  0: "日",
+  1: "月",
+  2: "火",
+  3: "水",
+  4: "木",
+  5: "金",
+  6: "土",
+};
+
+const COMPLETED_KEY_PREFIX = "completed-exercises-";
 
 function formatWeight(weight: number, isAssisted: boolean): string {
   return isAssisted ? `補助 ${weight}kg` : `${weight}kg`;
@@ -79,7 +70,6 @@ export default function MainPage() {
   const supabase = createClient();
   const [menu, setMenu] = useState<MenuWithExercises | null>(null);
   const [updateCounts, setUpdateCounts] = useState<Record<string, number>>({});
-  const [modal, setModal] = useState<WeightModal | null>(null);
   const [loading, setLoading] = useState(true);
   const [noMenuToday, setNoMenuToday] = useState(false);
   const [memoEdits, setMemoEdits] = useState<Record<string, string>>({});
@@ -87,6 +77,8 @@ export default function MainPage() {
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
   const [revealedId, setRevealedId] = useState<string | null>(null);
   const [actualsModal, setActualsModal] = useState<ActualsModal | null>(null);
+  const [savingActuals, setSavingActuals] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [progression, setProgression] = useState<ProgressionSuggestion | null>(null);
   const swipeStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
   const lastDateRef = useRef<string>(todayKey());
@@ -233,19 +225,6 @@ export default function MainPage() {
     };
   }, [syncDay, fetchTodayMenu]);
 
-  function openWeightModal(s: WorkoutSet, exercise: ExerciseWithSets) {
-    const step = exercise.weight_step ?? 2.5;
-    const direction = exercise.is_assisted ? -1 : 1;
-    setModal({
-      setId: s.id,
-      oldWeight: s.weight,
-      newWeight: Math.max(0, roundToStep(s.weight + step * direction, step)),
-      exerciseName: exercise.name,
-      step,
-      isAssisted: exercise.is_assisted,
-    });
-  }
-
   async function saveMemo(exerciseId: string, setIds: string[], memo: string) {
     setSavingMemo(exerciseId);
     const { error } = await supabase
@@ -268,40 +247,6 @@ export default function MainPage() {
       });
     }
     setSavingMemo(null);
-  }
-
-  async function saveWeightUpdate() {
-    if (!modal) return;
-    const isImprovement = modal.isAssisted
-      ? modal.newWeight < modal.oldWeight
-      : modal.newWeight > modal.oldWeight;
-    if (!isImprovement) return;
-
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { error: insertError } = await supabase.from("weight_updates").insert({
-      set_id: modal.setId,
-      user_id: user.id,
-      old_weight: modal.oldWeight,
-      new_weight: modal.newWeight,
-    });
-    if (insertError) {
-      console.error("重量更新の保存に失敗しました", insertError);
-      return;
-    }
-
-    const { error: updateError } = await supabase
-      .from("sets")
-      .update({ weight: modal.newWeight })
-      .eq("id", modal.setId);
-    if (updateError) {
-      console.error("セットの更新に失敗しました", updateError);
-      return;
-    }
-
-    setModal(null);
-    await fetchTodayMenu();
   }
 
   function addCompleted(exerciseId: string) {
@@ -345,66 +290,93 @@ export default function MainPage() {
   }
 
   async function saveActuals() {
-    if (!actualsModal) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!actualsModal || savingActuals) return;
+    setSavingActuals(true);
+    setSaveError(null);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setSaveError("ログインが切れています。再ログインしてください。");
+        return;
+      }
 
-    const payload = actualsModal.rows.map((r) => ({
-      set_id: r.set_id,
-      exercise_id: actualsModal.exerciseId,
-      user_id: user.id,
-      set_number: r.set_number,
-      planned_weight: r.planned_weight,
-      planned_reps: r.planned_reps,
-      actual_weight: r.actual_weight,
-      actual_reps: r.actual_reps,
-      is_assisted: actualsModal.isAssisted,
-    }));
-
-    const { error } = await supabase.from("set_logs").insert(payload);
-    if (error) {
-      console.error("実績の保存に失敗しました", error);
-      return;
-    }
-
-    addCompleted(actualsModal.exerciseId);
-
-    // 全セットで予定以上達成 → 進歩提案
-    const allHit = actualsModal.rows.every((r) => {
-      const repsOk = r.actual_reps >= r.planned_reps;
-      const weightOk = actualsModal.isAssisted
-        ? r.actual_weight <= r.planned_weight
-        : r.actual_weight >= r.planned_weight;
-      return repsOk && weightOk;
-    });
-
-    if (allHit) {
-      const direction = actualsModal.isAssisted ? -1 : 1;
-      const step = actualsModal.weightStep;
-      const updates = actualsModal.rows.map((r) => ({
-        setId: r.set_id,
-        newWeight: Math.max(0, roundToStep(r.actual_weight + step * direction, step)),
+      const payload = actualsModal.rows.map((r) => ({
+        set_id: r.set_id,
+        exercise_id: actualsModal.exerciseId,
+        user_id: user.id,
+        set_number: r.set_number,
+        planned_weight: r.planned_weight,
+        planned_reps: r.planned_reps,
+        actual_weight: r.actual_weight,
+        actual_reps: r.actual_reps,
+        is_assisted: actualsModal.isAssisted,
       }));
-      setProgression({
-        exerciseName: actualsModal.exerciseName,
-        isAssisted: actualsModal.isAssisted,
-        step,
-        updates,
-      });
-    }
 
-    setActualsModal(null);
+      const { error } = await supabase.from("set_logs").insert(payload);
+      if (error) {
+        setSaveError(
+          `保存に失敗しました: ${error.message}\nSupabaseで schema.sql を再実行してください。`
+        );
+        return;
+      }
+
+      addCompleted(actualsModal.exerciseId);
+
+      // 全セットで予定以上達成 → 進歩提案
+      const allHit = actualsModal.rows.every((r) => {
+        const repsOk = r.actual_reps >= r.planned_reps;
+        const weightOk = actualsModal.isAssisted
+          ? r.actual_weight <= r.planned_weight
+          : r.actual_weight >= r.planned_weight;
+        return repsOk && weightOk;
+      });
+
+      if (allHit) {
+        const direction = actualsModal.isAssisted ? -1 : 1;
+        const step = actualsModal.weightStep;
+        const updates = actualsModal.rows.map((r) => ({
+          setId: r.set_id,
+          oldWeight: r.planned_weight,
+          newWeight: Math.max(0, roundToStep(r.actual_weight + step * direction, step)),
+        }));
+        setProgression({
+          exerciseName: actualsModal.exerciseName,
+          isAssisted: actualsModal.isAssisted,
+          step,
+          updates,
+        });
+      }
+
+      setActualsModal(null);
+    } finally {
+      setSavingActuals(false);
+    }
   }
 
   async function applyProgression() {
     if (!progression) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     for (const u of progression.updates) {
-      const { error } = await supabase
+      // 計画値を更新
+      const { error: setError } = await supabase
         .from("sets")
         .update({ weight: u.newWeight })
         .eq("id", u.setId);
-      if (error) {
-        console.error("計画値の更新に失敗しました", error);
+      if (setError) {
+        console.error("計画値の更新に失敗しました", setError);
+        continue;
+      }
+      // 重量更新履歴に記録
+      const { error: histError } = await supabase.from("weight_updates").insert({
+        set_id: u.setId,
+        user_id: user.id,
+        old_weight: u.oldWeight,
+        new_weight: u.newWeight,
+      });
+      if (histError) {
+        console.error("重量更新履歴の保存に失敗しました", histError);
       }
     }
     setProgression(null);
@@ -564,12 +536,6 @@ export default function MainPage() {
                                 <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
                                   {s.reps}回
                                 </div>
-                                <button
-                                  onClick={() => openWeightModal(s, ex)}
-                                  className="px-2 py-1 bg-gray-300 rounded-full text-xs font-bold whitespace-nowrap"
-                                >
-                                  重量更新
-                                </button>
                               </div>
                             ))}
 
@@ -631,92 +597,6 @@ export default function MainPage() {
             ← 種目を左にスワイプで「完了」
           </p>
         </>
-      )}
-
-      {/* 重量更新モーダル */}
-      {modal && (
-        <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-end"
-          onClick={() => setModal(null)}
-        >
-          <div
-            className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-4 pb-8"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="text-center text-sm font-bold mb-1">{modal.exerciseName}</p>
-            <p className="text-center text-xs text-gray-500 mb-3">
-              現在: {formatWeight(modal.oldWeight, modal.isAssisted)} → 新しい値を選択（{modal.step}kg刻み）
-            </p>
-            <div className="flex items-center gap-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 justify-center">
-                  {/* − ボタン: 強くなる方向の逆 = 数値で言うと normal なら下げ、assist なら上げ */}
-                  <button
-                    className="w-10 h-10 bg-gray-200 rounded-full text-xl font-bold disabled:opacity-30"
-                    disabled={(() => {
-                      const delta = modal.isAssisted ? -modal.step : modal.step;
-                      const next = roundToStep(modal.newWeight - delta, modal.step);
-                      return modal.isAssisted ? next >= modal.oldWeight : next <= modal.oldWeight;
-                    })()}
-                    onClick={() =>
-                      setModal((m) => {
-                        if (!m) return m;
-                        const delta = m.isAssisted ? -m.step : m.step;
-                        const next = roundToStep(m.newWeight - delta, m.step);
-                        return { ...m, newWeight: Math.max(0, next) };
-                      })
-                    }
-                  >
-                    −
-                  </button>
-                  <span className="text-2xl font-bold w-32 text-center">
-                    {modal.isAssisted && <span className="text-xs mr-1">補助</span>}
-                    {modal.newWeight}
-                    <span className="text-sm ml-1">kg</span>
-                  </span>
-                  {/* ＋ ボタン: 強くなる方向 = normal なら上げ、assist なら下げ */}
-                  <button
-                    className="w-10 h-10 bg-gray-200 rounded-full text-xl font-bold"
-                    onClick={() =>
-                      setModal((m) => {
-                        if (!m) return m;
-                        const delta = m.isAssisted ? -m.step : m.step;
-                        const next = roundToStep(m.newWeight + delta, m.step);
-                        return { ...m, newWeight: Math.max(0, next) };
-                      })
-                    }
-                  >
-                    ＋
-                  </button>
-                </div>
-                <p className="text-center text-[10px] text-gray-400 mt-2">
-                  {modal.isAssisted
-                    ? "※ 補助を軽くする方向のみ更新可能"
-                    : "※ 現在の重量より大きい値のみ選択可能"}
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2 mt-4">
-              <button
-                onClick={() => setModal(null)}
-                className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold"
-              >
-                キャンセル
-              </button>
-              <button
-                onClick={saveWeightUpdate}
-                disabled={
-                  modal.isAssisted
-                    ? modal.newWeight >= modal.oldWeight
-                    : modal.newWeight <= modal.oldWeight
-                }
-                className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold disabled:opacity-50"
-              >
-                更新する
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* 実績入力モーダル */}
@@ -800,18 +680,29 @@ export default function MainPage() {
               </div>
             ))}
 
+            {saveError && (
+              <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded-lg text-[10px] text-red-700 whitespace-pre-wrap">
+                {saveError}
+              </div>
+            )}
+
             <div className="flex gap-2 mt-4">
               <button
-                onClick={() => setActualsModal(null)}
-                className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold"
+                onClick={() => {
+                  setActualsModal(null);
+                  setSaveError(null);
+                }}
+                disabled={savingActuals}
+                className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold disabled:opacity-50"
               >
                 キャンセル
               </button>
               <button
                 onClick={saveActuals}
-                className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
+                disabled={savingActuals}
+                className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold disabled:opacity-50"
               >
-                記録して完了
+                {savingActuals ? "保存中..." : "記録して完了"}
               </button>
             </div>
           </div>
