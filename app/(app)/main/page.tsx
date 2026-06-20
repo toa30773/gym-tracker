@@ -327,53 +327,65 @@ export default function MainPage() {
 
       addCompleted(actualsModal.exerciseId);
 
-      // 5パターン進歩判定
+      // 進歩判定（レップ差分 + セット数 + 重量充足 + RIR を総合）
       const isAssisted = actualsModal.isAssisted;
-      const allHit = actualsModal.rows.every((r) => {
-        const repsOk = r.actual_reps >= r.planned_reps;
-        const weightOk = isAssisted
-          ? r.actual_weight <= r.planned_weight
-          : r.actual_weight >= r.planned_weight;
-        return repsOk && weightOk;
-      });
-      const worstDeficit = Math.max(
-        0,
-        ...actualsModal.rows.map((r) => r.planned_reps - r.actual_reps)
-      );
+      const rows = actualsModal.rows;
+      const setCount = rows.length;
       const rir = actualsModal.rir;
+
+      const deltas = rows.map((r) => r.actual_reps - r.planned_reps);
+      const minDelta = Math.min(...deltas);
+      const excessSum = deltas.reduce((s, d) => s + Math.max(0, d), 0);
+      const hitCount = deltas.filter((d) => d >= 0).length;
+      const missCount = setCount - hitCount;
+      // 重量が予定より弱いセットが1つでもあれば weightWeak
+      const weightWeak = rows.some((r) =>
+        isAssisted
+          ? r.actual_weight > r.planned_weight
+          : r.actual_weight < r.planned_weight
+      );
 
       let delta = 0;
       let reason = "";
 
-      if (allHit) {
-        if (rir !== null && rir >= 3) {
-          delta = 2;
-          reason = "余裕で達成（最終セットでまだ3回以上いけた）。大幅にアップできます";
-        } else if (rir === 0) {
-          delta = 0;
-          reason = "ギリギリ達成（限界まで挙げきった）。今週は同重量で安定させましょう";
-        } else {
-          delta = 1;
-          reason =
-            rir === null
-              ? "全セット予定通り達成"
-              : `全セット予定通り達成（残り${rir}回程度の余裕）`;
-        }
+      if (hitCount === 0) {
+        delta = -1;
+        reason = "全セット未達。重量を下げて立て直しましょう";
+      } else if (minDelta <= -3 && missCount >= setCount / 2) {
+        delta = -1;
+        reason = `半数以上のセットで3回以上不足（${missCount}/${setCount}セット）。重量を下げて再挑戦しましょう`;
+      } else if (minDelta < 0) {
+        delta = 0;
+        const parts: string[] = [];
+        rows.forEach((r, i) => {
+          if (deltas[i] < 0) {
+            parts.push(`セット${r.set_number}で${-deltas[i]}回不足`);
+          }
+        });
+        reason = `${parts.join("、")}。据え置きで再挑戦しましょう`;
+      } else if (weightWeak) {
+        delta = 0;
+        reason = "レップは達成したが重量が予定より弱め。次回は予定の重量で挑戦しましょう";
+      } else if (rir === 0) {
+        delta = 0;
+        reason = "ギリギリ達成（限界まで挙げきった）。今週は同重量で安定させましょう";
+      } else if ((rir !== null && rir >= 3) || excessSum >= 2 * setCount) {
+        delta = 2;
+        const parts: string[] = [];
+        if (excessSum > 0) parts.push(`合計 +${excessSum}回オーバー`);
+        if (rir !== null && rir >= 3) parts.push(`最終セット 3+回残し`);
+        const detail = parts.length > 0 ? `（${parts.join("、")}）` : "";
+        reason = `余裕で達成${detail}。大幅にアップできます`;
+      } else if (excessSum > 0 || (rir !== null && rir >= 1)) {
+        delta = 1;
+        const parts: string[] = [];
+        if (excessSum > 0) parts.push(`合計 +${excessSum}回`);
+        if (rir !== null) parts.push(`残り${rir}回程度`);
+        const detail = parts.length > 0 ? `（${parts.join("、")}）` : "";
+        reason = `予定通り達成${detail}`;
       } else {
-        if (worstDeficit >= 3) {
-          delta = -1;
-          reason = `下限未達（最大 ${worstDeficit} 回不足）。重量を下げて再挑戦しましょう`;
-        } else {
-          delta = 0;
-          const failed = actualsModal.rows
-            .filter((r) => r.actual_reps < r.planned_reps)
-            .map((r) => `セット${r.set_number}で${r.planned_reps - r.actual_reps}回不足`)
-            .join("、");
-          reason =
-            failed.length > 0
-              ? `一部未達（${failed}）。来週は据え置きで再挑戦しましょう`
-              : "一部未達。来週は据え置きで再挑戦しましょう";
-        }
+        delta = 1;
+        reason = "全セット予定通り達成";
       }
 
       const direction = isAssisted ? -1 : 1;
