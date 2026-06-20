@@ -56,13 +56,14 @@ export default function MainPage() {
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
   const [revealedId, setRevealedId] = useState<string | null>(null);
   const swipeStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  const lastDateRef = useRef<string>(todayKey());
 
-  // 完了状態をlocalStorageから復元（過去日のキーは削除）
-  useEffect(() => {
+  // 今日の完了状態をlocalStorageから復元（過去日のキーは削除）
+  const syncDay = useCallback(() => {
     const key = COMPLETED_KEY_PREFIX + todayKey();
     try {
       const stored = localStorage.getItem(key);
-      if (stored) setCompletedIds(new Set(JSON.parse(stored)));
+      setCompletedIds(stored ? new Set(JSON.parse(stored)) : new Set());
       for (let i = localStorage.length - 1; i >= 0; i--) {
         const k = localStorage.key(i);
         if (k && k.startsWith(COMPLETED_KEY_PREFIX) && k !== key) {
@@ -70,7 +71,12 @@ export default function MainPage() {
         }
       }
     } catch {}
+    setRevealedId(null);
   }, []);
+
+  useEffect(() => {
+    syncDay();
+  }, [syncDay]);
 
   const fetchTodayMenu = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -136,6 +142,25 @@ export default function MainPage() {
   useEffect(() => {
     fetchTodayMenu();
   }, [fetchTodayMenu]);
+
+  // ページが表面に戻った時に日付が変わっていたらリセット＆再取得
+  useEffect(() => {
+    function checkDayRollover() {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      const nowKey = todayKey();
+      if (nowKey !== lastDateRef.current) {
+        lastDateRef.current = nowKey;
+        syncDay();
+        fetchTodayMenu();
+      }
+    }
+    document.addEventListener("visibilitychange", checkDayRollover);
+    window.addEventListener("focus", checkDayRollover);
+    return () => {
+      document.removeEventListener("visibilitychange", checkDayRollover);
+      window.removeEventListener("focus", checkDayRollover);
+    };
+  }, [syncDay, fetchTodayMenu]);
 
   function openWeightModal(s: WorkoutSet, exerciseName: string) {
     setModal({
