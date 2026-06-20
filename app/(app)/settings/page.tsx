@@ -60,12 +60,12 @@ type PickerTarget = {
   field: "weight" | "reps" | "body_part" | "ratio";
 } | null;
 
-// 50%〜95% を 5% 刻みで（トップは別扱いなので 100% は含めない）
-const RATIO_PCT_OPTIONS = Array.from({ length: 10 }, (_, i) => 50 + i * 5);
+// 50%〜100% を 5% 刻みで（100% = ストレートセット）
+const RATIO_PCT_OPTIONS = Array.from({ length: 11 }, (_, i) => 50 + i * 5);
 
-// 新規セットのデフォルト。新規追加のセットは「バックオフ85%」をデフォルトに、
-// 最終セットは UI で扱う。set_number 1（最初の追加）は実重量モード。
-const defaultSet = (n: number, ratio: number | null = 0.85): SetData => ({
+// 新規セットのデフォルト。デフォルトはストレートセット（=トップと同重量、ratio=1.0）。
+// バックオフ運用の人は設定画面の % ピッカーで個別に変更する。
+const defaultSet = (n: number, ratio: number | null = 1.0): SetData => ({
   set_number: n,
   weight: 20,
   reps: 10,
@@ -289,7 +289,7 @@ export default function SettingsPage() {
         ...s,
         set_number: i + 1,
         // 末尾 = トップ なので、削除で末尾が変わる可能性があり ratio を正規化する
-        backoff_ratio: i === list.length - 1 ? null : s.backoff_ratio ?? 0.85,
+        backoff_ratio: i === list.length - 1 ? null : s.backoff_ratio ?? 1.0,
       }));
       exercises[exIdx] = ex;
       return { ...prev, exercises };
@@ -310,7 +310,7 @@ export default function SettingsPage() {
         weight: top ? top.weight : 20,
         reps: top ? top.reps : 10,
         machine_height: "",
-        backoff_ratio: 0.85,
+        backoff_ratio: 1.0,
       };
       const list = [...ex.sets];
       list.splice(insertAt, 0, newSet);
@@ -877,7 +877,7 @@ export default function SettingsPage() {
                   : picker.field === "ratio"
                   ? Math.round(
                       ((menuData.exercises[picker.exIdx].sets[picker.setIdx]
-                        .backoff_ratio ?? 0.85) as number) * 100
+                        .backoff_ratio ?? 1.0) as number) * 100
                     )
                   : menuData.exercises[picker.exIdx].body_part
               }

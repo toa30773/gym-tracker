@@ -621,7 +621,7 @@ export default function MainPage() {
                                     {formatWeight(s.weight, ex.is_assisted)}
                                     {isTop ? (
                                       <span className="ml-1 text-[9px] text-gray-700 font-bold">TOP</span>
-                                    ) : ratio !== null && ratio !== undefined ? (
+                                    ) : ratio !== null && ratio !== undefined && ratio < 1 ? (
                                       <span className="ml-1 text-[9px] text-gray-500">
                                         ({Math.round(ratio * 100)}%)
                                       </span>
@@ -728,7 +728,7 @@ export default function MainPage() {
                   </span>
                   {isTop ? (
                     <span className="text-[9px] font-bold text-gray-800 ml-auto">TOP（限界まで）</span>
-                  ) : row.backoff_ratio !== null && row.backoff_ratio !== undefined ? (
+                  ) : row.backoff_ratio !== null && row.backoff_ratio !== undefined && row.backoff_ratio < 1 ? (
                     <span className="text-[9px] text-gray-500 ml-auto">
                       バックオフ {Math.round(row.backoff_ratio * 100)}%
                     </span>
