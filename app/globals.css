@@ -30,3 +30,19 @@ body {
 .scroll-picker-item {
   scroll-snap-align: center;
 }
+
+/* 設定画面のメニュー切替時のスライドアニメーション */
+@keyframes slideInFromRight {
+  from { transform: translateX(24px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+@keyframes slideInFromLeft {
+  from { transform: translateX(-24px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+.slide-in-right {
+  animation: slideInFromRight 220ms ease-out;
+}
+.slide-in-left {
+  animation: slideInFromLeft 220ms ease-out;
+}
