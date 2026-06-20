@@ -105,6 +105,8 @@ export default function SettingsPage() {
   const [showDaySelector, setShowDaySelector] = useState(false);
   const [intervalInput, setIntervalInput] = useState("");
   const [showCopyModal, setShowCopyModal] = useState(false);
+  // 「コピー」を押した直後に視覚フィードバックを出すための一時記憶（exercise.id の集合）
+  const [recentlyCopiedIds, setRecentlyCopiedIds] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -276,6 +278,20 @@ export default function SettingsPage() {
       ...prev,
       exercises: [...prev.exercises, copy],
     }));
+    // 押したボタンが「✓ 追加しました」に1.5秒切り替わるようマーク
+    setRecentlyCopiedIds((prev) => {
+      const next = new Set(prev);
+      next.add(srcExId);
+      return next;
+    });
+    setTimeout(() => {
+      setRecentlyCopiedIds((prev) => {
+        if (!prev.has(srcExId)) return prev;
+        const next = new Set(prev);
+        next.delete(srcExId);
+        return next;
+      });
+    }, 1500);
   }
 
   function removeExercise(exIdx: number) {
@@ -994,12 +1010,19 @@ export default function SettingsPage() {
                               {ex.sets.length}セット
                             </p>
                           </div>
-                          <button
-                            onClick={() => copyExerciseFromOther(m, ex.id)}
-                            className="px-3 py-1 bg-gray-800 text-white rounded-full text-[10px] font-bold whitespace-nowrap flex-shrink-0"
-                          >
-                            コピー
-                          </button>
+                          {(() => {
+                            const justCopied = recentlyCopiedIds.has(ex.id);
+                            return (
+                              <button
+                                onClick={() => copyExerciseFromOther(m, ex.id)}
+                                className={`px-3 py-1 text-white rounded-full text-[10px] font-bold whitespace-nowrap flex-shrink-0 transition-colors ${
+                                  justCopied ? "bg-emerald-600" : "bg-gray-800"
+                                }`}
+                              >
+                                {justCopied ? "✓ 追加しました" : "コピー"}
+                              </button>
+                            );
+                          })()}
                         </li>
                       ))}
                   </ul>
