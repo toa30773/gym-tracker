@@ -282,11 +282,6 @@ export default function MainPage() {
   const isComplete =
     menu !== null && menu.exercises.length > 0 && visibleGroups.length === 0;
 
-  const totalVisibleExercises = visibleGroups.reduce(
-    (sum, g) => sum + g.exercises.length,
-    0
-  );
-
   if (loading) {
     return <div className="flex items-center justify-center h-40 text-sm text-gray-500">読み込み中...</div>;
   }
@@ -325,10 +320,9 @@ export default function MainPage() {
         </div>
       ) : (
         <>
-          {visibleGroups.map((group, gIdx) => {
-            return (
-              <div key={`${group.body_part}-${gIdx}`}>
-                {group.exercises.map((ex, exIdxInGroup) => {
+          {visibleGroups.map((group, gIdx) => (
+            <div key={`${group.body_part}-${gIdx}`}>
+              {group.exercises.map((ex, exIdxInGroup) => {
                   const currentMemo = ex.sets[0]?.memo || "";
                   const editedMemo = memoEdits[ex.id] ?? currentMemo;
                   const isDirty = editedMemo !== currentMemo;
@@ -460,15 +454,12 @@ export default function MainPage() {
                     </div>
                   );
                 })}
-              </div>
-            );
-          })}
+            </div>
+          ))}
 
-          {totalVisibleExercises > 0 && (
-            <p className="text-center text-[10px] text-gray-400 mt-3">
-              ← 種目を左にスワイプで「完了」
-            </p>
-          )}
+          <p className="text-center text-[10px] text-gray-400 mt-3">
+            ← 種目を左にスワイプで「完了」
+          </p>
         </>
       )}
 
