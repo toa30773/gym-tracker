@@ -67,7 +67,7 @@ export interface MenuWithExercises extends Menu {
   exercises: ExerciseWithSets[];
 }
 
-export const WEIGHT_STEPS = [0.25, 0.5, 1, 1.25, 2.5, 5, 10] as const;
+export const WEIGHT_STEPS = [0.25, 0.5, 1, 1.25, 2.5, 5, 7, 10] as const;
 
 function stepDecimals(step: number): number {
   const s = step.toString();
