@@ -65,11 +65,24 @@ export interface MenuWithExercises extends Menu {
 export const WEIGHT_STEPS = [0.25, 0.5, 1, 1.25, 2.5, 5] as const;
 export type WeightStep = (typeof WEIGHT_STEPS)[number];
 
+export function stepDecimals(step: number): number {
+  const s = step.toString();
+  const i = s.indexOf(".");
+  return i === -1 ? 0 : s.length - i - 1;
+}
+
+export function roundToStep(value: number, step: number): number {
+  return +value.toFixed(stepDecimals(step));
+}
+
 export function buildWeightOptions(step: number, max = 200): number[] {
+  const d = stepDecimals(step);
+  const factor = Math.pow(10, d);
+  const stepN = Math.round(step * factor);
+  const maxN = Math.round(max * factor);
   const out: number[] = [];
-  const round = step < 1 ? 2 : 1;
-  for (let w = 0; w <= max + 1e-9; w = +(w + step).toFixed(round)) {
-    out.push(w);
+  for (let n = 0; n <= maxN; n += stepN) {
+    out.push(+(n / factor).toFixed(d));
   }
   return out;
 }

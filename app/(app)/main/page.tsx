@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Menu, MenuWithExercises, ExerciseWithSets, WorkoutSet } from "@/lib/types";
+import { roundToStep } from "@/lib/types";
 
 const DAY_MAP: Record<number, string> = {
   0: "日",
@@ -51,10 +52,6 @@ interface ProgressionSuggestion {
 
 function formatWeight(weight: number, isAssisted: boolean): string {
   return isAssisted ? `補助 ${weight}kg` : `${weight}kg`;
-}
-
-function roundStep(value: number, step: number): number {
-  return +value.toFixed(step < 1 ? 2 : 1);
 }
 
 function isMenuActiveToday(menu: Menu): boolean {
@@ -242,7 +239,7 @@ export default function MainPage() {
     setModal({
       setId: s.id,
       oldWeight: s.weight,
-      newWeight: Math.max(0, roundStep(s.weight + step * direction, step)),
+      newWeight: Math.max(0, roundToStep(s.weight + step * direction, step)),
       exerciseName: exercise.name,
       step,
       isAssisted: exercise.is_assisted,
@@ -386,7 +383,7 @@ export default function MainPage() {
       const step = actualsModal.weightStep;
       const updates = actualsModal.rows.map((r) => ({
         setId: r.set_id,
-        newWeight: Math.max(0, roundStep(r.actual_weight + step * direction, step)),
+        newWeight: Math.max(0, roundToStep(r.actual_weight + step * direction, step)),
       }));
       setProgression({
         exerciseName: actualsModal.exerciseName,
@@ -658,14 +655,14 @@ export default function MainPage() {
                     className="w-10 h-10 bg-gray-200 rounded-full text-xl font-bold disabled:opacity-30"
                     disabled={(() => {
                       const delta = modal.isAssisted ? -modal.step : modal.step;
-                      const next = roundStep(modal.newWeight - delta, modal.step);
+                      const next = roundToStep(modal.newWeight - delta, modal.step);
                       return modal.isAssisted ? next >= modal.oldWeight : next <= modal.oldWeight;
                     })()}
                     onClick={() =>
                       setModal((m) => {
                         if (!m) return m;
                         const delta = m.isAssisted ? -m.step : m.step;
-                        const next = roundStep(m.newWeight - delta, m.step);
+                        const next = roundToStep(m.newWeight - delta, m.step);
                         return { ...m, newWeight: Math.max(0, next) };
                       })
                     }
@@ -684,7 +681,7 @@ export default function MainPage() {
                       setModal((m) => {
                         if (!m) return m;
                         const delta = m.isAssisted ? -m.step : m.step;
-                        const next = roundStep(m.newWeight + delta, m.step);
+                        const next = roundToStep(m.newWeight + delta, m.step);
                         return { ...m, newWeight: Math.max(0, next) };
                       })
                     }
@@ -757,7 +754,7 @@ export default function MainPage() {
                       updateActualRow(
                         idx,
                         "actual_weight",
-                        Math.max(0, roundStep(row.actual_weight - actualsModal.weightStep, actualsModal.weightStep))
+                        Math.max(0, roundToStep(row.actual_weight - actualsModal.weightStep, actualsModal.weightStep))
                       )
                     }
                   >
@@ -772,7 +769,7 @@ export default function MainPage() {
                       updateActualRow(
                         idx,
                         "actual_weight",
-                        roundStep(row.actual_weight + actualsModal.weightStep, actualsModal.weightStep)
+                        roundToStep(row.actual_weight + actualsModal.weightStep, actualsModal.weightStep)
                       )
                     }
                   >
