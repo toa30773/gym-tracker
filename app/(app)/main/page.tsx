@@ -49,13 +49,18 @@ interface ProgressionSuggestion {
   topActual: number;
   topDelta: number; // 実 - 予定
   streak: number; // 同じ方向（オーバー / 不足）が連続したセッション数（今回含む）
-  // 'up' = TOP のみ重量アップ提案、'down' = 全セット重量ダウン提案、'hold' = 提案なし
-  action: "up" | "down" | "hold";
+  // 'up' = TOP のみ kg 加算
+  // 'down' = 全セット kg 減算（均一時のみ）
+  // 'down-to-match' = TOP のみ、最大バックオフに合わせる（不均一時の DOWN）
+  // 'hold' = 提案なし
+  action: "up" | "down" | "down-to-match" | "hold";
   step: number;
   // 全セットの重量が同一か。UP は揃ってる時しか提案しない（揃ってないなら upBlocked になる）。
   allEqual: boolean;
   // UP の信号は立ったが全セット未揃いのため現状維持
   upBlocked: boolean;
+  // 非 TOP セットの最大重量（down-to-match で TOP を揃える先）
+  maxBackoffWeight: number;
   // TOP 以外のセットで「予定回数に届かなかったもの」。重量判断には使わず、情報として表示するだけ。
   backoffShortages: { setNumber: number; planned: number; actual: number }[];
 }
@@ -393,7 +398,7 @@ export default function MainPage() {
       // 揃ってない時は UP 信号を出してもユーザーはまずバックオフを追いつかせるべき。
       const baseWeight = rows[0]?.planned_weight ?? 0;
       const allEqual = rows.every((r) => r.planned_weight === baseWeight);
-      let action: "up" | "down" | "hold" = "hold";
+      let action: ProgressionSuggestion["action"] = "hold";
       let upBlocked = false;
       const upSignal =
         sign > 0 && (Math.abs(topDelta) >= BIG_DELTA || streak >= STREAK_THRESHOLD);
@@ -403,7 +408,7 @@ export default function MainPage() {
         if (allEqual) action = "up";
         else upBlocked = true;
       } else if (downSignal) {
-        action = "down";
+        action = allEqual ? "down" : "down-to-match";
       }
 
       // TOP 以外で予定回数に届かなかったセット（情報表示用）。
@@ -417,6 +422,11 @@ export default function MainPage() {
           actual: r.actual_reps,
         }));
 
+      // バックオフの最大重量（down-to-match の TOP 到達先）
+      const maxBackoffWeight = rows
+        .slice(0, -1)
+        .reduce((m, r) => Math.max(m, r.planned_weight), 0);
+
       setProgression({
         exerciseId: actualsModal.exerciseId,
         exerciseName: actualsModal.exerciseName,
@@ -429,6 +439,7 @@ export default function MainPage() {
         step: actualsModal.weightStep,
         allEqual,
         upBlocked,
+        maxBackoffWeight,
         backoffShortages,
       });
       setProgressionDeltaInput(String(actualsModal.weightStep));
@@ -454,28 +465,37 @@ export default function MainPage() {
       return;
     }
 
-    // ユーザーが指定した kg。空欄や 0 以下は無効として扱う。
-    const deltaKg = parseFloat(progressionDeltaInput);
-    if (!Number.isFinite(deltaKg) || deltaKg <= 0) {
-      setProgression(null);
-      return;
-    }
-
     const direction = progression.isAssisted ? -1 : 1;
-    const sign = progression.action === "up" ? 1 : -1;
     const sortedSets = [...ex.sets].sort((a, b) => a.set_number - b.set_number);
     const top = sortedSets[sortedSets.length - 1];
 
-    // UP: TOP のみ。バックオフはユーザー判断で後から手動で追いつかせる。
-    // DOWN: 全セットを同じ kg 分一律で下げる（アシストは方向逆）。
-    const targets =
-      progression.action === "up" ? [top] : sortedSets;
+    // 適用対象セットと新重量計算を action ごとに決める。
+    let updates: { set: WorkoutSet; newWeight: number }[] = [];
+    if (progression.action === "down-to-match") {
+      // 不均一 + DOWN: TOP を最大バックオフ重量に揃える。入力 kg は使わない。
+      const maxBackoff = sortedSets
+        .slice(0, -1)
+        .reduce((m, s) => Math.max(m, s.weight), 0);
+      updates = [{ set: top, newWeight: maxBackoff }];
+    } else {
+      // UP / DOWN: 入力 kg を使う。空欄や 0 以下は無効。
+      const deltaKg = parseFloat(progressionDeltaInput);
+      if (!Number.isFinite(deltaKg) || deltaKg <= 0) {
+        setProgression(null);
+        return;
+      }
+      const sign = progression.action === "up" ? 1 : -1;
+      const targets = progression.action === "up" ? [top] : sortedSets;
+      updates = targets.map((s) => ({
+        set: s,
+        newWeight: Math.max(
+          0,
+          roundToStep(s.weight + sign * deltaKg * direction, progression.step),
+        ),
+      }));
+    }
 
-    for (const s of targets) {
-      const newWeight = Math.max(
-        0,
-        roundToStep(s.weight + sign * deltaKg * direction, progression.step),
-      );
+    for (const { set: s, newWeight } of updates) {
       if (newWeight === s.weight) continue;
       try {
         await updateSetLocal({
@@ -1003,6 +1023,21 @@ export default function MainPage() {
                     />
                     <span>kg を減算</span>
                   </div>
+                </div>
+              )}
+              {action === "down-to-match" && (
+                <div className="mb-4">
+                  <p className="text-center text-base font-bold text-red-600 mb-2">
+                    → TOP の重量を下げましょう
+                  </p>
+                  <p className="text-center text-xs text-gray-700">
+                    TOP をバックオフと同じ{" "}
+                    <span className="font-bold">{progression.maxBackoffWeight}kg</span>{" "}
+                    に戻します
+                  </p>
+                  <p className="text-center text-[10px] text-gray-500 mt-1">
+                    バックオフはそのまま。揃え直してから次の挑戦を。
+                  </p>
                 </div>
               )}
               {progression.upBlocked && (
