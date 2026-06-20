@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   getMenusWithExercisesForUser,
   getWeightUpdateCountsForSets,
+  getTopSetDeltaHistory,
   updateSet as updateSetLocal,
   putSetLog,
   putWeightUpdate,
@@ -38,12 +39,16 @@ interface ActualsModal {
 }
 
 interface ProgressionSuggestion {
+  exerciseId: string;
   exerciseName: string;
   isAssisted: boolean;
-  reason: string;
-  delta: number; // 強くなる方向のステップ倍率（+2=大幅up, +1=up, 0=据え置き, -1=down）
+  topPlanned: number;
+  topActual: number;
+  topDelta: number; // 実 - 予定
+  streak: number; // 同じ方向（オーバー / 不足）が連続したセッション数（今回含む）
+  // 'up' = 重量アップ提案、'down' = 重量ダウン提案、'hold' = まだ提案しない
+  action: "up" | "down" | "hold";
   step: number;
-  updates: { setId: string; oldWeight: number; newWeight: number }[];
 }
 
 const DAY_MAP: Record<number, string> = {
@@ -345,77 +350,46 @@ export default function MainPage() {
 
       addCompleted(actualsModal.exerciseId);
 
-      // 進歩判定（トップセット法：トップ＝最終セットのレップ数のみで判定）
+      // 進歩判定：トップセットの実 - 予定 と、同じ方向の連続セッション数 (streak) から決める。
+      // 重量を「何 kg 上げる／下げる」は前もって表示せず、提案だけ伝える方針。
       const isAssisted = actualsModal.isAssisted;
       const rows = actualsModal.rows;
-      const lastIdx = rows.length - 1;
-      const top = rows[lastIdx];
-
+      const top = rows[rows.length - 1];
       const topDelta = top.actual_reps - top.planned_reps;
+      const sign = topDelta > 0 ? 1 : topDelta < 0 ? -1 : 0;
 
-      let delta = 0;
-      let reason = "";
-
-      if (topDelta <= -3) {
-        delta = -1;
-        reason = `トップが${-topDelta}回不足。重量を下げて再挑戦しましょう`;
-      } else if (topDelta < 0) {
-        delta = 0;
-        reason = `トップが${-topDelta}回不足。据え置きで再挑戦しましょう`;
-      } else if (topDelta === 0) {
-        delta = 0;
-        reason = "トップ予定通り（限界に到達）。今週は同重量で安定させましょう";
-      } else if (topDelta <= 2) {
-        delta = 1;
-        reason = `トップ +${topDelta}回。順調なので少しアップしましょう`;
-      } else if (topDelta <= 4) {
-        delta = 2;
-        reason = `トップ +${topDelta}回でまだ余裕あり。大幅にアップできます`;
-      } else if (topDelta <= 6) {
-        delta = 3;
-        reason = `トップ +${topDelta}回。重量がかなり軽い、しっかり上げましょう`;
-      } else {
-        delta = 4;
-        reason = `トップ +${topDelta}回。明らかに重量が軽すぎる、大幅にアップしましょう`;
+      // 過去ログ（今回のものは IndexedDB に既に書き込み済み）を新しい順で取り、
+      // 同じ方向が続いている連続セッション数を数える。
+      const history = await getTopSetDeltaHistory(actualsModal.exerciseId);
+      let streak = 0;
+      if (sign !== 0) {
+        for (const h of history) {
+          const s = h.delta > 0 ? 1 : h.delta < 0 ? -1 : 0;
+          if (s === sign) streak += 1;
+          else break;
+        }
       }
 
-      const direction = isAssisted ? -1 : 1;
-      const step = actualsModal.weightStep;
-      // 新トップ重量。delta=0 でも何も変えない方針は既存と同じ。
-      const newTopWeight = Math.max(
-        0,
-        roundToStep(top.actual_weight + delta * step * direction, step)
-      );
-
-      const updates =
-        delta === 0
-          ? []
-          : rows.map((r, i) => {
-              const isTop = i === lastIdx;
-              const ratio = r.backoff_ratio;
-              // バックオフ（比率あり）はトップから自動再計算。トップ＆独立セットは個別に delta を適用。
-              const newWeight = isTop
-                ? newTopWeight
-                : ratio !== null && ratio !== undefined
-                ? Math.max(0, roundToStep(newTopWeight * ratio, step))
-                : Math.max(
-                    0,
-                    roundToStep(r.actual_weight + delta * step * direction, step)
-                  );
-              return {
-                setId: r.set_id,
-                oldWeight: r.planned_weight,
-                newWeight,
-              };
-            });
+      // 大幅（±3 回以上）は 1 回で提案、そうでなければ 2 セッション連続で提案。
+      const STREAK_THRESHOLD = 2;
+      const BIG_DELTA = 3;
+      let action: "up" | "down" | "hold" = "hold";
+      if (sign > 0 && (Math.abs(topDelta) >= BIG_DELTA || streak >= STREAK_THRESHOLD)) {
+        action = "up";
+      } else if (sign < 0 && (Math.abs(topDelta) >= BIG_DELTA || streak >= STREAK_THRESHOLD)) {
+        action = "down";
+      }
 
       setProgression({
+        exerciseId: actualsModal.exerciseId,
         exerciseName: actualsModal.exerciseName,
         isAssisted,
-        reason,
-        delta,
-        step,
-        updates,
+        topPlanned: top.planned_reps,
+        topActual: top.actual_reps,
+        topDelta,
+        streak,
+        action,
+        step: actualsModal.weightStep,
       });
 
       setActualsModal(null);
@@ -426,30 +400,62 @@ export default function MainPage() {
 
   async function applyProgression() {
     if (!progression) return;
+    if (progression.action === "hold") {
+      setProgression(null);
+      return;
+    }
     const userId = await getCurrentUserId();
     if (!userId) return;
 
-    // 現在の set 一覧を局所参照（weight 以外を保持して update する必要があるため）
-    const setById = new Map<string, WorkoutSet>();
-    if (menu) {
-      for (const ex of menu.exercises) for (const s of ex.sets) setById.set(s.id, s);
+    const ex = menu?.exercises.find((e) => e.id === progression.exerciseId);
+    if (!ex) {
+      setProgression(null);
+      return;
     }
 
-    for (const u of progression.updates) {
-      const orig = setById.get(u.setId);
-      if (!orig) continue;
+    const direction = progression.isAssisted ? -1 : 1;
+    const sign = progression.action === "up" ? 1 : -1;
+    const sortedSets = [...ex.sets].sort((a, b) => a.set_number - b.set_number);
+    const top = sortedSets[sortedSets.length - 1];
+    const newTopWeight = Math.max(
+      0,
+      roundToStep(
+        top.weight + sign * progression.step * direction,
+        progression.step,
+      ),
+    );
+
+    for (const s of sortedSets) {
+      let newWeight: number;
+      if (s.id === top.id) {
+        newWeight = newTopWeight;
+      } else if (s.backoff_ratio !== null && s.backoff_ratio !== undefined) {
+        newWeight = Math.max(
+          0,
+          roundToStep(newTopWeight * s.backoff_ratio, progression.step),
+        );
+      } else {
+        newWeight = Math.max(
+          0,
+          roundToStep(
+            s.weight + sign * progression.step * direction,
+            progression.step,
+          ),
+        );
+      }
+      if (newWeight === s.weight) continue;
       try {
         await updateSetLocal({
-          ...orig,
-          weight: u.newWeight,
-          backoff_ratio: orig.backoff_ratio ?? null,
+          ...s,
+          weight: newWeight,
+          backoff_ratio: s.backoff_ratio ?? null,
         });
         await putWeightUpdate({
           id: newId(),
-          set_id: u.setId,
+          set_id: s.id,
           user_id: userId,
-          old_weight: u.oldWeight,
-          new_weight: u.newWeight,
+          old_weight: s.weight,
+          new_weight: newWeight,
           updated_at: nowIso(),
         });
       } catch (e) {
@@ -753,7 +759,8 @@ export default function MainPage() {
                     inputMode="decimal"
                     min={0}
                     step={actualsModal.weightStep}
-                    value={Number.isFinite(row.actual_weight) ? row.actual_weight : 0}
+                    value={row.actual_weight === 0 ? "" : row.actual_weight}
+                    placeholder="0"
                     onChange={(e) => {
                       const str = e.target.value;
                       if (str === "") {
@@ -835,69 +842,94 @@ export default function MainPage() {
         </div>
       )}
 
-      {/* 進歩提案モーダル */}
-      {progression && (
-        <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-end"
-          onClick={() => setProgression(null)}
-        >
+      {/* 進歩提案モーダル：定量的な kg は出さず、超過 / 不足の回数と連続セッション数だけ伝える。 */}
+      {progression && (() => {
+        const { topPlanned, topActual, topDelta, streak, action } = progression;
+        const sign = topDelta > 0 ? 1 : topDelta < 0 ? -1 : 0;
+        const STREAK_NEEDED = 2;
+        return (
           <div
-            className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-5 pb-8"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 bg-black/40 z-50 flex items-end"
+            onClick={() => setProgression(null)}
           >
-            <p className="text-center text-base font-bold mb-2">
-              {progression.exerciseName}
-            </p>
-            {progression.delta !== 0 && (
-              <p className="text-center text-lg font-bold mb-1">
-                {(() => {
-                  const absDelta = Math.abs(progression.delta);
-                  const totalKg = +(absDelta * progression.step).toFixed(2);
-                  if (progression.isAssisted) {
-                    return progression.delta > 0
-                      ? `次回は補助 -${totalKg}kg で挑戦`
-                      : `次回は補助 +${totalKg}kg に戻す`;
-                  }
-                  return progression.delta > 0
-                    ? `次回は +${totalKg}kg で挑戦`
-                    : `次回は -${totalKg}kg に下げる`;
-                })()}
+            <div
+              className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-5 pb-8"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="text-center text-base font-bold mb-3">
+                {progression.exerciseName}
               </p>
-            )}
-            {progression.delta === 0 && (
-              <p className="text-center text-lg font-bold mb-1">据え置き推奨</p>
-            )}
-            <p className="text-center text-xs text-gray-600 mb-4 px-2">
-              {progression.reason}
-            </p>
-            <div className="flex gap-2">
-              {progression.delta !== 0 ? (
-                <>
+              <p className="text-center text-sm mb-1">
+                トップ 予定 {topPlanned}回 → 実 {topActual}回
+                <span
+                  className={`ml-2 font-bold ${
+                    sign > 0
+                      ? "text-emerald-600"
+                      : sign < 0
+                      ? "text-red-500"
+                      : "text-gray-500"
+                  }`}
+                >
+                  ({topDelta > 0 ? "+" : ""}
+                  {topDelta}回)
+                </span>
+              </p>
+              {sign !== 0 && (
+                <p className="text-center text-xs text-gray-600 mb-3">
+                  {sign > 0 ? "+回オーバー" : "-回不足"} が{" "}
+                  <span className="font-bold">{streak}</span> セッション連続
+                </p>
+              )}
+              {sign === 0 && (
+                <p className="text-center text-xs text-gray-600 mb-3">
+                  予定通りピッタリ。今の重量で安定中。
+                </p>
+              )}
+              {action === "up" && (
+                <p className="text-center text-base font-bold text-emerald-700 mb-4">
+                  → {progression.isAssisted ? "補助を減らしましょう" : "重量を上げましょう"}
+                </p>
+              )}
+              {action === "down" && (
+                <p className="text-center text-base font-bold text-red-600 mb-4">
+                  → {progression.isAssisted ? "補助を増やしましょう" : "重量を下げましょう"}
+                </p>
+              )}
+              {action === "hold" && sign !== 0 && (
+                <p className="text-center text-xs text-gray-500 mb-4">
+                  あと {Math.max(0, STREAK_NEEDED - streak)} セッション同じ調子なら提案します
+                </p>
+              )}
+
+              <div className="flex gap-2">
+                {action !== "hold" ? (
+                  <>
+                    <button
+                      onClick={() => setProgression(null)}
+                      className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold"
+                    >
+                      現状維持
+                    </button>
+                    <button
+                      onClick={applyProgression}
+                      className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
+                    >
+                      計画に反映
+                    </button>
+                  </>
+                ) : (
                   <button
                     onClick={() => setProgression(null)}
-                    className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold"
-                  >
-                    現状維持
-                  </button>
-                  <button
-                    onClick={applyProgression}
                     className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
                   >
-                    計画に反映
+                    OK
                   </button>
-                </>
-              ) : (
-                <button
-                  onClick={() => setProgression(null)}
-                  className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
-                >
-                  OK
-                </button>
-              )}
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

@@ -389,3 +389,30 @@ export async function getMenusWithExercisesForUser(
   return result;
 }
 
+// 指定種目の「日付ごとのトップセットの実レップ - 予定レップ」を新しい順で返す。
+// トップセットの判定は set_number が最大のもの。
+export async function getTopSetDeltaHistory(
+  exerciseId: string,
+): Promise<{ date: string; delta: number }[]> {
+  const db = await getDB();
+  const logs = await db.getAllFromIndex("set_logs", "by_exercise", exerciseId);
+  const byDate = new Map<
+    string,
+    { setNumber: number; planned: number; actual: number }
+  >();
+  for (const log of logs) {
+    const date = log.performed_at.slice(0, 10);
+    const cur = byDate.get(date);
+    if (!cur || log.set_number > cur.setNumber) {
+      byDate.set(date, {
+        setNumber: log.set_number,
+        planned: log.planned_reps,
+        actual: log.actual_reps,
+      });
+    }
+  }
+  return [...byDate.entries()]
+    .map(([date, { planned, actual }]) => ({ date, delta: actual - planned }))
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+}
+

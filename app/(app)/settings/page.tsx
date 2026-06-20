@@ -1040,7 +1040,10 @@ export default function SettingsPage() {
                     inputMode="decimal"
                     min={0}
                     step={step}
-                    value={Number.isFinite(set.weight) ? set.weight : 0}
+                    // 0 のときは空表示 + placeholder="0" にする。
+                    // value=0 のままだと iOS で select() が効かず "0" を消せない事故が起きる。
+                    value={set.weight === 0 ? "" : set.weight}
+                    placeholder="0"
                     onChange={(e) => {
                       const str = e.target.value;
                       if (str === "") {
