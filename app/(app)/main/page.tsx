@@ -104,16 +104,54 @@ export default function MainPage() {
       return;
     }
 
-    const m = todayMenus[0] as MenuWithExercises;
-    m.exercises = m.exercises.map((ex) => ({
-      ...ex,
-      sets: ex.sets.sort((a: WorkoutSet, b: WorkoutSet) => a.set_number - b.set_number),
-    }));
-    setMenu(m);
+    let combinedMenu: MenuWithExercises;
+    if (todayMenus.length === 1) {
+      const only = todayMenus[0] as MenuWithExercises;
+      combinedMenu = {
+        ...only,
+        exercises: only.exercises.map((ex) => ({
+          ...ex,
+          sets: [...ex.sets].sort((a, b) => a.set_number - b.set_number),
+        })),
+      };
+    } else {
+      // 複数メニューが同日にマッチした場合は合体し、部位ごとにまとめる
+      const menuOrder = new Map<string, number>();
+      const bodyPartOrder: string[] = [];
+      const byBodyPart = new Map<string, ExerciseWithSets[]>();
+      todayMenus.forEach((mm, idx) => {
+        menuOrder.set(mm.id, idx);
+        for (const ex of mm.exercises) {
+          if (!byBodyPart.has(ex.body_part)) {
+            bodyPartOrder.push(ex.body_part);
+            byBodyPart.set(ex.body_part, []);
+          }
+          byBodyPart.get(ex.body_part)!.push({
+            ...ex,
+            sets: [...ex.sets].sort((a, b) => a.set_number - b.set_number),
+          });
+        }
+      });
+      for (const part of bodyPartOrder) {
+        byBodyPart.get(part)!.sort((a, b) => {
+          const ma = menuOrder.get(a.menu_id) ?? 0;
+          const mb = menuOrder.get(b.menu_id) ?? 0;
+          if (ma !== mb) return ma - mb;
+          return (a.order_index ?? 0) - (b.order_index ?? 0);
+        });
+      }
+      combinedMenu = {
+        ...(todayMenus[0] as MenuWithExercises),
+        name: todayMenus.map((mm) => mm.name).join(" + "),
+        exercises: bodyPartOrder.flatMap((p) => byBodyPart.get(p)!),
+      };
+    }
+
+    setMenu(combinedMenu);
     setNoMenuToday(false);
 
     // 重量更新回数を取得
-    const setIds = m.exercises.flatMap((ex) => ex.sets.map((s: WorkoutSet) => s.id));
+    const setIds = combinedMenu.exercises.flatMap((ex) => ex.sets.map((s) => s.id));
     if (setIds.length > 0) {
       const { data: updates } = await supabase
         .from("weight_updates")
@@ -125,7 +163,7 @@ export default function MainPage() {
         counts[u.set_id] = (counts[u.set_id] || 0) + 1;
       });
       const exCounts: Record<string, number> = {};
-      m.exercises.forEach((ex) => {
+      combinedMenu.exercises.forEach((ex) => {
         exCounts[ex.id] = ex.sets.reduce(
           (sum: number, s: WorkoutSet) => sum + (counts[s.id] || 0),
           0
