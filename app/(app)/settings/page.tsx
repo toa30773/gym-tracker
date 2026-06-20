@@ -24,6 +24,23 @@ import { WEIGHT_STEPS, buildWeightOptions, roundToStep } from "@/lib/types";
 
 const BODY_PARTS = ["胸", "背中", "肩", "腕", "脚", "腹", "体幹", "全身"];
 const DAYS = ["月", "火", "水", "木", "金", "土", "日"];
+// Date.getDay() は 0=日, 1=月, ..., 6=土
+const DAY_LABEL_BY_INDEX = ["日", "月", "火", "水", "木", "金", "土"];
+const DAY_INDEX_BY_LABEL: Record<string, number> = {
+  日: 0, 月: 1, 火: 2, 水: 3, 木: 4, 金: 5, 土: 6,
+};
+
+// 起点曜日に該当する「今日以降の最初の日付」を ISO (YYYY-MM-DD) で返す
+function nextDateOfDay(label: string): string {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayIdx = today.getDay();
+  const targetIdx = DAY_INDEX_BY_LABEL[label] ?? todayIdx;
+  const diff = (targetIdx - todayIdx + 7) % 7;
+  const target = new Date(today);
+  target.setDate(today.getDate() + diff);
+  return target.toISOString().slice(0, 10);
+}
 const REPS = Array.from({ length: 30 }, (_, i) => i + 1);
 const MAX_MENUS = 10;
 
@@ -250,20 +267,47 @@ export default function SettingsPage() {
   }
 
   function toggleDay(day: string) {
-    setMenuData((prev) => ({
-      ...prev,
-      days: prev.days.includes(day)
-        ? prev.days.filter((d) => d !== day)
-        : [...prev.days, day],
-    }));
+    setMenuData((prev) => {
+      // 間隔モード = 起点曜日を 1 日だけ保持。同じ日を再タップで解除し、間隔も同時に解除。
+      if (prev.interval_days) {
+        if (prev.days.length === 1 && prev.days[0] === day) {
+          return { ...prev, days: [], interval_days: null, start_date: null };
+        }
+        return { ...prev, days: [day], start_date: nextDateOfDay(day) };
+      }
+      // 通常モード（複数選択トグル）
+      return {
+        ...prev,
+        days: prev.days.includes(day)
+          ? prev.days.filter((d) => d !== day)
+          : [...prev.days, day],
+      };
+    });
   }
 
   function setInterval(days: number | null) {
-    setMenuData((prev) => ({
-      ...prev,
-      interval_days: days,
-      start_date: days ? new Date().toISOString().slice(0, 10) : null,
-    }));
+    setMenuData((prev) => {
+      if (!days) {
+        return { ...prev, interval_days: null, start_date: null };
+      }
+      // 間隔を入れる際は起点曜日を必ず確定させる。
+      // 未選択なら今日の曜日、複数選択中なら先頭を残す。
+      let dayList = prev.days;
+      let startLabel: string;
+      if (dayList.length === 0) {
+        startLabel = DAY_LABEL_BY_INDEX[new Date().getDay()];
+        dayList = [startLabel];
+      } else {
+        startLabel = dayList[0];
+        if (dayList.length > 1) dayList = [startLabel];
+      }
+      return {
+        ...prev,
+        days: dayList,
+        interval_days: days,
+        start_date: nextDateOfDay(startLabel),
+      };
+    });
     setIntervalInput(days ? String(days) : "");
   }
 
@@ -603,75 +647,109 @@ export default function SettingsPage() {
             placeholder="メニュー名"
           />
         </div>
-        <button
-          onClick={() => setShowDaySelector((s) => !s)}
-          className="px-3 py-1.5 bg-gray-200 rounded-full text-xs flex-shrink-0"
-        >
-          {menuData.days.length > 0
-            ? menuData.days.join("・")
-            : menuData.interval_days
-            ? `${menuData.interval_days}日おき`
-            : "曜日/間隔を設定"}
-        </button>
+        {(() => {
+          const startLabel = menuData.days[0] ?? null;
+          let chipText: string;
+          if (menuData.days.length === 0) chipText = "曜日を設定";
+          else if (menuData.interval_days && startLabel)
+            chipText = `${startLabel}起点 / ${menuData.interval_days}日`;
+          else chipText = menuData.days.join("・");
+          return (
+            <button
+              onClick={() => setShowDaySelector((s) => !s)}
+              className="px-3 py-1.5 bg-gray-200 rounded-full text-xs flex-shrink-0"
+            >
+              {chipText}
+            </button>
+          );
+        })()}
       </div>
 
-      {/* 曜日/間隔セレクタ */}
-      {showDaySelector && (
-        <div className="mx-4 mb-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
-          <p className="text-xs font-bold mb-2">曜日を選択</p>
-          <div className="flex gap-1 mb-3">
-            {DAYS.map((d) => (
-              <button
-                key={d}
-                onClick={() => toggleDay(d)}
-                className={`flex-1 py-1 rounded text-xs border ${
-                  menuData.days.includes(d)
-                    ? "bg-gray-700 text-white border-gray-700"
-                    : "bg-white text-gray-700 border-gray-300"
-                }`}
-              >
-                {d}
-              </button>
-            ))}
-          </div>
+      {/* 曜日 / 間隔セレクタ */}
+      {showDaySelector && (() => {
+        const startLabel = menuData.days[0] ?? null;
+        const nextLabel =
+          menuData.interval_days && startLabel
+            ? DAY_LABEL_BY_INDEX[
+                (DAY_INDEX_BY_LABEL[startLabel] + menuData.interval_days) % 7
+              ]
+            : null;
+        const showNextDistinct = nextLabel && nextLabel !== startLabel;
+        return (
+          <div className="mx-4 mb-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
+            <p className="text-xs font-bold mb-2">
+              {menuData.interval_days ? "起点曜日（1つ）" : "曜日を選択"}
+            </p>
+            <div className="flex gap-1 mb-3">
+              {DAYS.map((d) => {
+                const isStart = menuData.days.includes(d);
+                const isNext = showNextDistinct && d === nextLabel;
+                const cls = isStart
+                  ? "bg-gray-700 text-white border-gray-700"
+                  : isNext
+                  ? "bg-emerald-100 text-emerald-900 border-emerald-400"
+                  : "bg-white text-gray-700 border-gray-300";
+                return (
+                  <button
+                    key={d}
+                    onClick={() => toggleDay(d)}
+                    className={`flex-1 py-1 rounded text-xs border ${cls}`}
+                  >
+                    {d}
+                  </button>
+                );
+              })}
+            </div>
 
-          <p className="text-xs font-bold mb-2">または間隔指定</p>
-          <div className="flex items-center gap-2">
-            <span className="text-xs">毎</span>
-            <input
-              type="number"
-              min={1}
-              max={30}
-              value={intervalInput}
-              onChange={(e) => {
-                setIntervalInput(e.target.value);
-                const n = parseInt(e.target.value, 10);
-                if (!isNaN(n) && n > 0) {
-                  setInterval(n);
-                } else if (e.target.value === "") {
-                  setInterval(null);
-                }
-              }}
-              className="w-14 px-2 py-1 bg-white border border-gray-300 rounded text-center text-xs"
-              placeholder="--"
-            />
-            <span className="text-xs">日おき</span>
-            {menuData.interval_days && (
-              <button
-                onClick={() => setInterval(null)}
-                className="text-xs text-gray-500 underline ml-2"
-              >
-                クリア
-              </button>
+            {/* 間隔は「曜日が 1 日だけ選択」されているときだけ入力可能 */}
+            {menuData.days.length === 1 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs">間隔</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={intervalInput}
+                  onChange={(e) => {
+                    setIntervalInput(e.target.value);
+                    const n = parseInt(e.target.value, 10);
+                    if (!isNaN(n) && n > 0) setInterval(n);
+                    else if (e.target.value === "") setInterval(null);
+                  }}
+                  className="w-14 px-2 py-1 bg-white border border-gray-300 rounded text-center text-xs"
+                  placeholder="--"
+                />
+                <span className="text-xs">日</span>
+                {menuData.interval_days && (
+                  <button
+                    onClick={() => setInterval(null)}
+                    className="text-xs text-gray-500 underline ml-2"
+                  >
+                    クリア
+                  </button>
+                )}
+              </div>
+            )}
+
+            {menuData.interval_days && menuData.start_date && (
+              <p className="text-[10px] text-gray-500 mt-2">
+                開始 {menuData.start_date}
+                {showNextDistinct && (
+                  <span className="ml-2">
+                    → 次回 <span className="text-emerald-700 font-bold">{nextLabel}</span>
+                  </span>
+                )}
+              </p>
+            )}
+
+            {menuData.days.length >= 2 && (
+              <p className="text-[10px] text-gray-500 mt-2">
+                間隔指定は起点曜日を 1 つだけ選んだ場合に使えます
+              </p>
             )}
           </div>
-          {menuData.interval_days && menuData.start_date && (
-            <p className="text-[10px] text-gray-500 mt-2">
-              開始日: {menuData.start_date}
-            </p>
-          )}
-        </div>
-      )}
+        );
+      })()}
 
       <div className="h-px bg-black mx-4 mb-3" />
 

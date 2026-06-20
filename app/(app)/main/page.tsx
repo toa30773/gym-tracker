@@ -62,14 +62,18 @@ function isMenuActiveToday(menu: Menu): boolean {
   const today = new Date();
   const todayLabel = DAY_MAP[today.getDay()];
 
-  if (menu.days && menu.days.includes(todayLabel)) return true;
-
+  // 間隔モード（起点曜日 + 間隔）：start_date を基準に N 日おきで判定。
+  // 起点曜日の合致は条件にしない（毎週その曜日に活性化、にならない）。
   if (menu.interval_days && menu.start_date) {
     const start = new Date(menu.start_date);
     const diffMs = today.setHours(0, 0, 0, 0) - start.setHours(0, 0, 0, 0);
     const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
     if (diffDays >= 0 && diffDays % menu.interval_days === 0) return true;
+    return false;
   }
+
+  // 曜日のみモード：曜日リストに今日が含まれるか
+  if (menu.days && menu.days.includes(todayLabel)) return true;
 
   return false;
 }
