@@ -52,8 +52,11 @@ interface ProgressionSuggestion {
   // 'up' = TOP のみ kg 加算
   // 'down' = 全セット kg 減算（均一時のみ）
   // 'down-to-match' = TOP のみ、最大バックオフに合わせる（不均一時の DOWN）
+  // 'reps-up' / 'reps-down' = 自重種目（TOP 重量 0）の場合、全セットの予定レップ数を増減
   // 'hold' = 提案なし
-  action: "up" | "down" | "down-to-match" | "hold";
+  action: "up" | "down" | "down-to-match" | "reps-up" | "reps-down" | "hold";
+  // TOP 重量が 0 = 自重種目
+  isBodyweight: boolean;
   step: number;
   // 全セットの重量が同一か。UP は揃ってる時しか提案しない（揃ってないなら upBlocked になる）。
   allEqual: boolean;
@@ -398,6 +401,10 @@ export default function MainPage() {
       // 揃ってない時は UP 信号を出してもユーザーはまずバックオフを追いつかせるべき。
       const baseWeight = rows[0]?.planned_weight ?? 0;
       const allEqual = rows.every((r) => r.planned_weight === baseWeight);
+      // TOP 重量が 0 なら自重種目（アシスト 0 でも、非アシスト 0 でも同じく "自重"）。
+      // 重量での増減はできないので、進歩はレップで表現する。
+      const isBodyweight = top.planned_weight === 0;
+
       let action: ProgressionSuggestion["action"] = "hold";
       let upBlocked = false;
       const upSignal =
@@ -405,10 +412,12 @@ export default function MainPage() {
       const downSignal =
         sign < 0 && (Math.abs(topDelta) >= BIG_DELTA || streak >= STREAK_THRESHOLD);
       if (upSignal) {
-        if (allEqual) action = "up";
+        if (isBodyweight) action = "reps-up";
+        else if (allEqual) action = "up";
         else upBlocked = true;
       } else if (downSignal) {
-        action = allEqual ? "down" : "down-to-match";
+        if (isBodyweight) action = "reps-down";
+        else action = allEqual ? "down" : "down-to-match";
       }
 
       // TOP 以外で予定回数に届かなかったセット（情報表示用）。
@@ -440,9 +449,15 @@ export default function MainPage() {
         allEqual,
         upBlocked,
         maxBackoffWeight,
+        isBodyweight,
         backoffShortages,
       });
-      setProgressionDeltaInput(String(actualsModal.weightStep));
+      // 重量 action は kg、自重 action はレップを既定値に。
+      setProgressionDeltaInput(
+        action === "reps-up" || action === "reps-down"
+          ? "1"
+          : String(actualsModal.weightStep),
+      );
 
       setActualsModal(null);
     } finally {
@@ -469,16 +484,41 @@ export default function MainPage() {
     const sortedSets = [...ex.sets].sort((a, b) => a.set_number - b.set_number);
     const top = sortedSets[sortedSets.length - 1];
 
-    // 適用対象セットと新重量計算を action ごとに決める。
+    // 自重種目（reps-up / reps-down）：全セットの planned reps を増減。重量は変えない。
+    if (progression.action === "reps-up" || progression.action === "reps-down") {
+      const deltaReps = parseInt(progressionDeltaInput, 10);
+      if (!Number.isFinite(deltaReps) || deltaReps <= 0) {
+        setProgression(null);
+        return;
+      }
+      const sign = progression.action === "reps-up" ? 1 : -1;
+      for (const s of sortedSets) {
+        const newReps = Math.max(1, s.reps + sign * deltaReps);
+        if (newReps === s.reps) continue;
+        try {
+          await updateSetLocal({
+            ...s,
+            reps: newReps,
+            backoff_ratio: s.backoff_ratio ?? null,
+          });
+        } catch (e) {
+          console.error("レップ数の更新に失敗しました", e);
+        }
+      }
+      runSync().catch(() => {});
+      setProgression(null);
+      await fetchTodayMenu();
+      return;
+    }
+
+    // 重量系：適用対象セットと新重量計算を action ごとに決める。
     let updates: { set: WorkoutSet; newWeight: number }[] = [];
     if (progression.action === "down-to-match") {
-      // 不均一 + DOWN: TOP を最大バックオフ重量に揃える。入力 kg は使わない。
       const maxBackoff = sortedSets
         .slice(0, -1)
         .reduce((m, s) => Math.max(m, s.weight), 0);
       updates = [{ set: top, newWeight: maxBackoff }];
     } else {
-      // UP / DOWN: 入力 kg を使う。空欄や 0 以下は無効。
       const deltaKg = parseFloat(progressionDeltaInput);
       if (!Number.isFinite(deltaKg) || deltaKg <= 0) {
         setProgression(null);
@@ -1038,6 +1078,50 @@ export default function MainPage() {
                   <p className="text-center text-[10px] text-gray-500 mt-1">
                     バックオフはそのまま。揃え直してから次の挑戦を。
                   </p>
+                </div>
+              )}
+              {action === "reps-up" && (
+                <div className="mb-4">
+                  <p className="text-center text-base font-bold text-emerald-700 mb-2">
+                    → 予定レップ数を増やしましょう（自重種目）
+                  </p>
+                  <div className="flex items-center justify-center gap-2 text-xs">
+                    <span>全セットに</span>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      step={1}
+                      value={progressionDeltaInput}
+                      placeholder="1"
+                      onChange={(e) => setProgressionDeltaInput(e.target.value)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="w-16 text-center text-base font-bold bg-gray-100 rounded outline-none py-1"
+                    />
+                    <span>回 追加</span>
+                  </div>
+                </div>
+              )}
+              {action === "reps-down" && (
+                <div className="mb-4">
+                  <p className="text-center text-base font-bold text-red-600 mb-2">
+                    → 予定レップ数を減らしましょう（自重種目）
+                  </p>
+                  <div className="flex items-center justify-center gap-2 text-xs">
+                    <span>全セットから</span>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      step={1}
+                      value={progressionDeltaInput}
+                      placeholder="1"
+                      onChange={(e) => setProgressionDeltaInput(e.target.value)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="w-16 text-center text-base font-bold bg-gray-100 rounded outline-none py-1"
+                    />
+                    <span>回 減算</span>
+                  </div>
                 </div>
               )}
               {progression.upBlocked && (
