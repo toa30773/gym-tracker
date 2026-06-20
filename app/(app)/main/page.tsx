@@ -109,7 +109,6 @@ export default function MainPage() {
   const [menu, setMenu] = useState<MenuWithExercises | null>(null);
   const [updateCounts, setUpdateCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
-  const [noMenuToday, setNoMenuToday] = useState(false);
   const [memoEdits, setMemoEdits] = useState<Record<string, string>>({});
   const [savingMemo, setSavingMemo] = useState<string | null>(null);
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
@@ -154,7 +153,6 @@ export default function MainPage() {
 
     if (!allMenus || allMenus.length === 0) {
       setMenu(null);
-      setNoMenuToday(false);
       setLoading(false);
       return;
     }
@@ -163,7 +161,6 @@ export default function MainPage() {
 
     if (todayMenus.length === 0) {
       setMenu(null);
-      setNoMenuToday(true);
       setLoading(false);
       return;
     }
@@ -212,7 +209,6 @@ export default function MainPage() {
     }
 
     setMenu(combinedMenu);
-    setNoMenuToday(false);
 
     // 重量更新回数を取得
     const setIds = combinedMenu.exercises.flatMap((ex) => ex.sets.map((s) => s.id));
@@ -607,15 +603,10 @@ export default function MainPage() {
 
   if (!menu) {
     return (
-      <div className="flex flex-col items-center justify-center h-40 gap-2 px-6 text-center">
-        {noMenuToday ? (
-          <>
-            <p className="text-sm text-gray-500">今日はメニューがありません</p>
-            <p className="text-xs text-gray-400">設定画面で曜日を確認してください</p>
-          </>
-        ) : (
-          <p className="text-sm text-gray-500">休み</p>
-        )}
+      <div className="flex items-center justify-center h-60">
+        <span className="text-5xl font-extrabold tracking-widest text-gray-700">
+          休み
+        </span>
       </div>
     );
   }
