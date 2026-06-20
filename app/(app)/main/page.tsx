@@ -20,7 +20,6 @@ interface ActualsModal {
   isAssisted: boolean;
   weightStep: number;
   rows: ActualRow[];
-  rir: number | null; // 最終セットの余裕度（あと何回いけたか）。null=未入力
 }
 
 interface ProgressionSuggestion {
@@ -280,7 +279,6 @@ export default function MainPage() {
         actual_weight: s.weight,
         actual_reps: s.reps,
       })),
-      rir: null,
     });
     setRevealedId(null);
   }
@@ -314,7 +312,7 @@ export default function MainPage() {
         actual_weight: r.actual_weight,
         actual_reps: r.actual_reps,
         is_assisted: actualsModal.isAssisted,
-        rir: actualsModal.rir,
+        rir: null,
       }));
 
       const { error } = await supabase.from("set_logs").insert(payload);
@@ -327,18 +325,18 @@ export default function MainPage() {
 
       addCompleted(actualsModal.exerciseId);
 
-      // 進歩判定（レップ差分 + セット数 + 重量充足 + RIR を総合）
+      // 進歩判定（トップセット式：最終セットで限界、それ以外は予定通り想定）
       const isAssisted = actualsModal.isAssisted;
       const rows = actualsModal.rows;
-      const setCount = rows.length;
-      const rir = actualsModal.rir;
+      const lastIdx = rows.length - 1;
+      const last = rows[lastIdx];
+      const firstSets = rows.slice(0, lastIdx);
 
-      const deltas = rows.map((r) => r.actual_reps - r.planned_reps);
-      const minDelta = Math.min(...deltas);
-      const excessSum = deltas.reduce((s, d) => s + Math.max(0, d), 0);
-      const hitCount = deltas.filter((d) => d >= 0).length;
-      const missCount = setCount - hitCount;
-      // 重量が予定より弱いセットが1つでもあれば weightWeak
+      const lastDelta = last.actual_reps - last.planned_reps;
+      const firstDeltas = firstSets.map((r) => r.actual_reps - r.planned_reps);
+      const firstMinDelta =
+        firstDeltas.length > 0 ? Math.min(...firstDeltas) : 0;
+      const firstSetsHit = firstDeltas.every((d) => d >= 0);
       const weightWeak = rows.some((r) =>
         isAssisted
           ? r.actual_weight > r.planned_weight
@@ -348,53 +346,39 @@ export default function MainPage() {
       let delta = 0;
       let reason = "";
 
-      if (hitCount === 0) {
+      if (!firstSetsHit && firstMinDelta <= -3) {
+        // 前半セット（予定通りこなすはず）が大きく崩れた = 重量が重すぎる
         delta = -1;
-        reason = "全セット未達。重量を下げて立て直しましょう";
-      } else if (minDelta <= -3 && missCount >= setCount / 2) {
-        delta = -1;
-        reason = `半数以上のセットで3回以上不足（${missCount}/${setCount}セット）。重量を下げて再挑戦しましょう`;
-      } else if (minDelta < 0) {
+        reason = `予定セットで${-firstMinDelta}回不足。重量を下げて立て直しましょう`;
+      } else if (!firstSetsHit) {
         delta = 0;
-        const parts: string[] = [];
-        rows.forEach((r, i) => {
-          if (deltas[i] < 0) {
-            parts.push(`セット${r.set_number}で${-deltas[i]}回不足`);
-          }
-        });
-        reason = `${parts.join("、")}。据え置きで再挑戦しましょう`;
+        reason = `予定セットで${-firstMinDelta}回不足。据え置きで再挑戦しましょう`;
       } else if (weightWeak) {
         delta = 0;
-        reason = "レップは達成したが重量が予定より弱め。次回は予定の重量で挑戦しましょう";
-      } else if (rir === 0) {
+        reason =
+          "レップは達成したが重量が予定より弱め。次回は予定の重量で挑戦しましょう";
+      } else if (lastDelta <= -3) {
+        delta = -1;
+        reason = `最終セットが${-lastDelta}回不足。重量を下げて再挑戦しましょう`;
+      } else if (lastDelta < 0) {
         delta = 0;
-        reason = "ギリギリ達成（限界まで挙げきった）。今週は同重量で安定させましょう";
-      } else if ((rir !== null && rir >= 3) || excessSum >= 2 * setCount) {
-        // 階段式: 超過量に応じて +2 / +3 / +4 を選ぶ
-        const parts: string[] = [];
-        if (excessSum > 0) parts.push(`合計 +${excessSum}回オーバー`);
-        if (rir !== null && rir >= 3) parts.push(`最終セット 3+回残し`);
-        const detail = parts.length > 0 ? `（${parts.join("、")}）` : "";
-        if (excessSum >= 4 * setCount) {
-          delta = 4;
-          reason = `明らかに重量が軽すぎる${detail}。大幅にアップしましょう`;
-        } else if (excessSum >= 3 * setCount) {
-          delta = 3;
-          reason = `重量がかなり軽い${detail}。しっかりアップしましょう`;
-        } else {
-          delta = 2;
-          reason = `余裕で達成${detail}。大幅にアップできます`;
-        }
-      } else if (excessSum > 0 || (rir !== null && rir >= 1)) {
+        reason = `最終セットが${-lastDelta}回不足。据え置きで再挑戦しましょう`;
+      } else if (lastDelta === 0) {
+        delta = 0;
+        reason =
+          "最終セット予定通り（限界に到達）。今週は同重量で安定させましょう";
+      } else if (lastDelta <= 2) {
         delta = 1;
-        const parts: string[] = [];
-        if (excessSum > 0) parts.push(`合計 +${excessSum}回`);
-        if (rir !== null) parts.push(`残り${rir}回程度`);
-        const detail = parts.length > 0 ? `（${parts.join("、")}）` : "";
-        reason = `予定通り達成${detail}`;
+        reason = `最終セット +${lastDelta}回。順調なので少しアップしましょう`;
+      } else if (lastDelta <= 4) {
+        delta = 2;
+        reason = `最終セット +${lastDelta}回でまだ余裕あり。大幅にアップできます`;
+      } else if (lastDelta <= 6) {
+        delta = 3;
+        reason = `最終セット +${lastDelta}回。重量がかなり軽い、しっかり上げましょう`;
       } else {
-        delta = 1;
-        reason = "全セット予定通り達成";
+        delta = 4;
+        reason = `最終セット +${lastDelta}回。明らかに重量が軽すぎる、大幅にアップしましょう`;
       }
 
       const direction = isAssisted ? -1 : 1;
@@ -752,39 +736,6 @@ export default function MainPage() {
                 </div>
               </div>
             ))}
-
-            {/* RIR (あと何回いけた？) */}
-            <div className="mb-3 p-3 bg-gray-50 rounded-xl">
-              <p className="text-[10px] text-gray-600 mb-2">
-                最終セットでまだあと何回いけた？（任意・スキップ可）
-              </p>
-              <div className="flex gap-1.5">
-                {[
-                  { v: 0, label: "0" },
-                  { v: 1, label: "1" },
-                  { v: 2, label: "2" },
-                  { v: 3, label: "3+" },
-                ].map((opt) => (
-                  <button
-                    key={opt.v}
-                    onClick={() =>
-                      setActualsModal((prev) =>
-                        prev
-                          ? { ...prev, rir: prev.rir === opt.v ? null : opt.v }
-                          : prev
-                      )
-                    }
-                    className={`flex-1 py-1.5 rounded-full text-xs font-bold border ${
-                      actualsModal.rir === opt.v
-                        ? "bg-gray-800 text-white border-gray-800"
-                        : "bg-white text-gray-700 border-gray-300"
-                    }`}
-                  >
-                    {opt.label}回
-                  </button>
-                ))}
-              </div>
-            </div>
 
             {saveError && (
               <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded-lg text-[10px] text-red-700 whitespace-pre-wrap">
