@@ -15,7 +15,7 @@ import {
   newId,
   nowIso,
 } from "@/lib/local-db";
-import { getCurrentUserId, runSync } from "@/lib/sync";
+import { getCurrentUserId, runSync, subscribeSync } from "@/lib/sync";
 import ScrollPicker from "@/components/ScrollPicker";
 import type { Menu, Exercise, WorkoutSet, MenuWithExercises } from "@/lib/types";
 import { WEIGHT_STEPS, buildWeightOptions, roundToStep } from "@/lib/types";
@@ -160,6 +160,27 @@ export default function SettingsPage() {
       }
     });
   }, [fetchMenus]);
+
+  // sync の pull で IndexedDB にメニューが入った直後にも一覧を反映させる。
+  // 初回マウント時の fetchMenus はローカル DB がまだ空のことがあり、
+  // その時 savedMenus = [] のまま固定されて pager / delete が消えたままになる。
+  useEffect(() => {
+    let lastSeen: string | null = null;
+    const unsub = subscribeSync((s) => {
+      if (!s.lastSyncAt || s.lastSyncAt === lastSeen) return;
+      lastSeen = s.lastSyncAt;
+      // 編集中のメニューを上書きしないため、未保存の編集が無さそうな時だけ
+      // 最初のメニューにジャンプする。すでに 1 件以上見えていれば一覧だけ更新。
+      fetchMenus().then((list) => {
+        if (!list) return;
+        if (savedMenus.length === 0 && list.length > 0) {
+          loadMenu(list[0]);
+          setCurrentIdx(0);
+        }
+      });
+    });
+    return unsub;
+  }, [fetchMenus, savedMenus.length]);
 
   // 切替可能なメニュー数 = 保存済み + 次の1つ（最大MAX_MENUS）
   const visibleCount = Math.min(savedMenus.length + 1, MAX_MENUS);
