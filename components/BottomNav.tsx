@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useNavGuard } from "@/lib/nav-guard";
+import { requestNavigation } from "@/lib/nav-guard";
 
 const tabs = [
   { label: "設定", href: "/settings" },
@@ -12,7 +12,6 @@ const tabs = [
 export default function BottomNav() {
   const pathname = usePathname();
   const router = useRouter();
-  const { requestNavigation } = useNavGuard();
 
   function handleClick(href: string) {
     if (href === pathname) return;

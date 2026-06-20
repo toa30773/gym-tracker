@@ -17,7 +17,7 @@ import {
   nowIso,
 } from "@/lib/local-db";
 import { getCurrentUserId, runSync, subscribeSync } from "@/lib/sync";
-import { useNavGuard } from "@/lib/nav-guard";
+import { registerGuard } from "@/lib/nav-guard";
 import ScrollPicker from "@/components/ScrollPicker";
 import type { Menu, Exercise, WorkoutSet, MenuWithExercises } from "@/lib/types";
 import { WEIGHT_STEPS, buildWeightOptions, roundToStep } from "@/lib/types";
@@ -120,7 +120,6 @@ export default function SettingsPage() {
   );
   // 未保存ガード：BottomNav で別ページへ遷移しようとした時にここに proceed が積まれる
   const [pendingProceed, setPendingProceed] = useState<(() => void) | null>(null);
-  const { registerGuard } = useNavGuard();
 
   const fetchMenus = useCallback(async () => {
     const userId = await getCurrentUserId();
@@ -432,7 +431,7 @@ export default function SettingsPage() {
     }
     registerGuard((proceed) => setPendingProceed(() => proceed));
     return () => registerGuard(null);
-  }, [isDirty, registerGuard]);
+  }, [isDirty]);
 
   async function save() {
     setSaving(true);
