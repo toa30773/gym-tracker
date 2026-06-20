@@ -1,93 +1,201 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Exercise, WorkoutSet, WeightUpdate } from "@/lib/types";
 
-interface SetWithHistory extends WorkoutSet {
-  history: WeightUpdate[];
+interface ExerciseInfo {
+  id: string;
+  name: string;
+  body_part: string;
+  is_assisted: boolean;
 }
 
-interface ExerciseWithHistory extends Exercise {
-  setsWithHistory: SetWithHistory[];
-  latestUpdatedAt: string | null;
-  prevUpdatedAt: string | null;
+interface LogRow {
+  exercise_id: string;
+  performed_at: string;
+  actual_weight: number;
+  actual_reps: number;
+  set_number: number;
 }
 
-function formatDate(iso: string | null) {
-  if (!iso) return "--/--";
+interface DatePoint {
+  date: string; // YYYY-MM-DD
+  weight: number; // 日ごとの max actual_weight
+  reps: number; // その max 重量での最大 reps
+}
+
+interface ExerciseHistory {
+  info: ExerciseInfo;
+  points: DatePoint[]; // 日付昇順
+}
+
+function dateKey(iso: string): string {
   const d = new Date(iso);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
-function formatDateTime(iso: string) {
-  const d = new Date(iso);
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-  return `${d.getFullYear()}/${mm}/${dd} ${hh}:${mi}`;
+function formatMd(key: string): string {
+  const [, m, d] = key.split("-");
+  return `${parseInt(m, 10)}/${parseInt(d, 10)}`;
+}
+
+function formatWeight(w: number, isAssisted: boolean): string {
+  return isAssisted ? `補助 ${w}kg` : `${w}kg`;
+}
+
+function MiniLineChart({
+  points,
+  isAssisted,
+}: {
+  points: DatePoint[];
+  isAssisted: boolean;
+}) {
+  const W = 320;
+  const H = 100;
+  const PAD_X = 12;
+  const PAD_Y = 16;
+
+  if (points.length === 0) return null;
+
+  const weights = points.map((p) => p.weight);
+  const minW = Math.min(...weights);
+  const maxW = Math.max(...weights);
+  const range = maxW - minW || 1;
+
+  const innerW = W - PAD_X * 2;
+  const innerH = H - PAD_Y * 2;
+  const xs =
+    points.length === 1
+      ? [W / 2]
+      : points.map(
+          (_, i) => PAD_X + (i / (points.length - 1)) * innerW
+        );
+  // アシスト種目では数値が下がるほど改善なので、表示上は通常と同じ向きで描画（値が小さいほど下）。
+  // ユーザーには「右下がり = 改善」が直感的になるよう、is_assisted の場合は y を反転させる。
+  const ys = points.map((p) => {
+    const t = (p.weight - minW) / range; // 0..1
+    const tAdj = isAssisted ? 1 - t : t;
+    return H - PAD_Y - tAdj * innerH;
+  });
+
+  const path = points
+    .map((_, i) => `${i === 0 ? "M" : "L"} ${xs[i].toFixed(1)} ${ys[i].toFixed(1)}`)
+    .join(" ");
+
+  return (
+    <svg
+      width="100%"
+      viewBox={`0 0 ${W} ${H}`}
+      className="block"
+      preserveAspectRatio="none"
+    >
+      {/* ベースライン */}
+      <line
+        x1={PAD_X}
+        x2={W - PAD_X}
+        y1={H - PAD_Y}
+        y2={H - PAD_Y}
+        stroke="#e5e7eb"
+        strokeWidth={1}
+      />
+      <path d={path} stroke="#111827" strokeWidth={2} fill="none" />
+      {points.map((p, i) => (
+        <circle
+          key={i}
+          cx={xs[i]}
+          cy={ys[i]}
+          r={3}
+          fill="#111827"
+        />
+      ))}
+      {/* y軸ラベル: 最小・最大 */}
+      <text x={2} y={PAD_Y + 4} fontSize={9} fill="#9ca3af">
+        {isAssisted ? minW : maxW}
+      </text>
+      <text x={2} y={H - PAD_Y + 9} fontSize={9} fill="#9ca3af">
+        {isAssisted ? maxW : minW}
+      </text>
+    </svg>
+  );
 }
 
 export default function WeightHistoryPage() {
   const supabase = createClient();
-  const [exercises, setExercises] = useState<ExerciseWithHistory[]>([]);
+  const [histories, setHistories] = useState<ExerciseHistory[]>([]);
   const [loading, setLoading] = useState(true);
-  const [detail, setDetail] = useState<ExerciseWithHistory | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const fetchHistory = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { data: exData } = await supabase
-      .from("exercises")
-      .select("*, sets(*)")
-      .eq("user_id", user.id)
-      .order("order_index");
-
-    if (!exData) {
+    if (!user) {
       setLoading(false);
       return;
     }
 
-    const results: ExerciseWithHistory[] = [];
+    const { data: exData } = await supabase
+      .from("exercises")
+      .select("id, name, body_part, is_assisted")
+      .eq("user_id", user.id);
 
-    for (const ex of exData) {
-      const sortedSets = (ex.sets as WorkoutSet[]).sort((a, b) => a.set_number - b.set_number);
-      const setIds = sortedSets.map((s) => s.id);
-      if (setIds.length === 0) continue;
+    const { data: logData } = await supabase
+      .from("set_logs")
+      .select("exercise_id, performed_at, actual_weight, actual_reps, set_number")
+      .eq("user_id", user.id)
+      .order("performed_at", { ascending: true });
 
-      const { data: updates } = await supabase
-        .from("weight_updates")
-        .select("*")
-        .in("set_id", setIds)
-        .order("updated_at", { ascending: false });
+    const exercises: ExerciseInfo[] = (exData || []).map((e) => ({
+      id: e.id,
+      name: e.name,
+      body_part: e.body_part,
+      is_assisted: e.is_assisted ?? false,
+    }));
 
-      const updatesBySet: Record<string, WeightUpdate[]> = {};
-      (updates || []).forEach((u) => {
-        if (!updatesBySet[u.set_id]) updatesBySet[u.set_id] = [];
-        updatesBySet[u.set_id].push(u as WeightUpdate);
-      });
+    const logs: LogRow[] = (logData || []) as LogRow[];
 
-      const setsWithHistory: SetWithHistory[] = sortedSets.map((s) => ({
-        ...s,
-        history: updatesBySet[s.id] || [],
-      }));
-
-      const allUpdates = (updates || []) as WeightUpdate[];
-      const latestUpdatedAt = allUpdates[0]?.updated_at || null;
-      const prevUpdatedAt =
-        allUpdates.find((u) => u.updated_at !== latestUpdatedAt)?.updated_at || null;
-
-      results.push({
-        ...(ex as Exercise),
-        setsWithHistory,
-        latestUpdatedAt,
-        prevUpdatedAt,
-      });
+    // exercise_id ごとにグループ化
+    const byEx = new Map<string, LogRow[]>();
+    for (const log of logs) {
+      if (!byEx.has(log.exercise_id)) byEx.set(log.exercise_id, []);
+      byEx.get(log.exercise_id)!.push(log);
     }
 
-    setExercises(results.filter((ex) => ex.setsWithHistory.some((s) => s.history.length > 0)));
+    const results: ExerciseHistory[] = [];
+    for (const ex of exercises) {
+      const rows = byEx.get(ex.id);
+      if (!rows || rows.length === 0) continue;
+
+      // 日付ごとに max weight、その重量の最大 reps を抽出
+      const byDate = new Map<string, { weight: number; reps: number }>();
+      for (const r of rows) {
+        const key = dateKey(r.performed_at);
+        const cur = byDate.get(key);
+        if (!cur) {
+          byDate.set(key, { weight: r.actual_weight, reps: r.actual_reps });
+        } else if (r.actual_weight > cur.weight) {
+          byDate.set(key, { weight: r.actual_weight, reps: r.actual_reps });
+        } else if (r.actual_weight === cur.weight && r.actual_reps > cur.reps) {
+          byDate.set(key, { weight: r.actual_weight, reps: r.actual_reps });
+        }
+      }
+
+      const points: DatePoint[] = [...byDate.entries()]
+        .map(([date, v]) => ({ date, weight: v.weight, reps: v.reps }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      results.push({ info: ex, points });
+    }
+
+    // 直近のトレーニング日が新しい順
+    results.sort((a, b) => {
+      const al = a.points[a.points.length - 1]?.date || "";
+      const bl = b.points[b.points.length - 1]?.date || "";
+      return bl.localeCompare(al);
+    });
+
+    setHistories(results);
     setLoading(false);
   }, [supabase]);
 
@@ -95,15 +203,29 @@ export default function WeightHistoryPage() {
     fetchHistory();
   }, [fetchHistory]);
 
+  const totalSessions = useMemo(() => {
+    const dates = new Set<string>();
+    for (const h of histories) {
+      for (const p of h.points) dates.add(p.date);
+    }
+    return dates.size;
+  }, [histories]);
+
   if (loading) {
-    return <div className="flex items-center justify-center h-40 text-sm text-gray-500">読み込み中...</div>;
+    return (
+      <div className="flex items-center justify-center h-40 text-sm text-gray-500">
+        読み込み中...
+      </div>
+    );
   }
 
-  if (exercises.length === 0) {
+  if (histories.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-40 gap-2">
-        <p className="text-sm text-gray-500">重量更新の履歴がありません</p>
-        <a href="/main" className="text-xs text-blue-500 underline">メイン画面へ</a>
+        <p className="text-sm text-gray-500">まだ実績がありません</p>
+        <a href="/main" className="text-xs text-blue-500 underline">
+          メイン画面へ
+        </a>
       </div>
     );
   }
@@ -111,116 +233,95 @@ export default function WeightHistoryPage() {
   return (
     <div className="pb-2">
       {/* ヘッダー */}
-      <div className="px-4 pt-4 pb-2">
-        <h1 className="text-sm font-bold">重量更新頻度表</h1>
+      <div className="flex items-center justify-between px-4 pt-4 pb-2">
+        <h1 className="text-sm font-bold">重量推移</h1>
+        <span className="text-[10px] text-gray-500">
+          通算 {totalSessions}日
+        </span>
       </div>
       <div className="h-px bg-black mx-4 mb-3" />
 
-      {exercises.map((ex, exIdx) => (
-        <div key={ex.id}>
-          <div className="px-4 py-2">
-            {/* 更新日情報 + 履歴ボタン */}
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs">
-                更新日　{formatDate(ex.latestUpdatedAt)}　前回　{formatDate(ex.prevUpdatedAt)}
-              </p>
-              <button
-                onClick={() => setDetail(ex)}
-                className="px-3 py-1 bg-gray-800 text-white rounded-full text-xs font-bold"
-              >
-                履歴
-              </button>
+      {histories.map((h) => {
+        const first = h.points[0];
+        const last = h.points[h.points.length - 1];
+        const change = h.info.is_assisted
+          ? first.weight - last.weight
+          : last.weight - first.weight;
+        const isOpen = openId === h.info.id;
+        return (
+          <div key={h.info.id} className="px-4 py-3 border-b border-gray-100">
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="inline-flex px-2 py-0.5 border border-gray-400 rounded-full text-[10px]">
+                {h.info.body_part}
+              </span>
+              <span className="text-xs font-bold truncate">{h.info.name}</span>
+              {h.info.is_assisted && (
+                <span className="ml-auto text-[9px] text-gray-500">
+                  アシスト
+                </span>
+              )}
             </div>
 
-            {/* 種目名 */}
-            <div className="flex justify-center mb-2">
-              <div className="bg-gray-200 rounded-full px-8 py-1 text-xs font-bold">
-                {ex.name}
-              </div>
-            </div>
-
-            {/* セット別重量推移 */}
-            {ex.setsWithHistory.map((s) => {
-              const latest = s.history[0];
-              const prev = s.history[1];
-              if (!latest) return null;
-              return (
-                <div key={s.id} className="flex items-center gap-2 mb-1.5">
-                  <div className="flex items-center justify-center w-5 h-5 bg-gray-200 rounded text-xs">
-                    {s.set_number}
-                  </div>
-                  <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
-                    {prev ? `${prev.new_weight}kg` : `${latest.old_weight ?? "--"}kg`}
-                  </div>
-                  <span className="text-sm font-bold">→</span>
-                  <div className="flex items-center justify-center w-5 h-5 bg-gray-200 rounded text-xs">
-                    {s.set_number}
-                  </div>
-                  <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
-                    {latest.new_weight}kg
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {exIdx < exercises.length - 1 && (
-            <div className="h-px bg-black mx-4 my-1" />
-          )}
-        </div>
-      ))}
-
-      {/* 履歴詳細モーダル */}
-      {detail && (
-        <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-end"
-          onClick={() => setDetail(null)}
-        >
-          <div
-            className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-4 pb-8 max-h-[80vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-bold">{detail.name} の履歴</h2>
-              <button
-                onClick={() => setDetail(null)}
-                className="text-xs text-gray-500"
-              >
-                閉じる
-              </button>
-            </div>
-
-            {detail.setsWithHistory.map((s) => (
-              <div key={s.id} className="mb-4">
-                <p className="text-xs font-bold mb-1.5">セット {s.set_number}</p>
-                {s.history.length === 0 ? (
-                  <p className="text-[10px] text-gray-400 pl-3">履歴なし</p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {s.history.map((u) => (
-                      <li
-                        key={u.id}
-                        className="flex items-center justify-between gap-2 bg-gray-100 rounded-lg px-3 py-2"
-                      >
-                        <span className="text-[10px] text-gray-500">
-                          {formatDateTime(u.updated_at)}
-                        </span>
-                        <div className="flex items-center gap-1.5 text-xs">
-                          <span className="text-gray-500">
-                            {u.old_weight ?? "--"}kg
-                          </span>
-                          <span>→</span>
-                          <span className="font-bold">{u.new_weight}kg</span>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+            <div className="flex items-baseline justify-between mb-1">
+              <span className="text-xs text-gray-500">
+                {formatMd(first.date)} → {formatMd(last.date)}
+              </span>
+              <span className="text-xs">
+                <span className="text-gray-500">
+                  {formatWeight(first.weight, h.info.is_assisted)}
+                </span>
+                <span className="mx-1">→</span>
+                <span className="font-bold">
+                  {formatWeight(last.weight, h.info.is_assisted)}
+                </span>
+                {change !== 0 && (
+                  <span
+                    className={`ml-1 text-[10px] ${
+                      change > 0 ? "text-emerald-600" : "text-red-500"
+                    }`}
+                  >
+                    ({change > 0 ? "+" : ""}
+                    {(+change.toFixed(2)).toString()}kg)
+                  </span>
                 )}
-              </div>
-            ))}
+              </span>
+            </div>
+
+            <MiniLineChart points={h.points} isAssisted={h.info.is_assisted} />
+
+            <div className="flex items-center justify-between mt-1">
+              <span className="text-[10px] text-gray-400">
+                {h.points.length}日分
+              </span>
+              <button
+                onClick={() => setOpenId(isOpen ? null : h.info.id)}
+                className="text-[10px] text-gray-600 underline"
+              >
+                {isOpen ? "閉じる" : "詳細"}
+              </button>
+            </div>
+
+            {isOpen && (
+              <ul className="mt-2 space-y-1">
+                {[...h.points].reverse().map((p) => (
+                  <li
+                    key={p.date}
+                    className="flex items-center justify-between bg-gray-100 rounded-lg px-3 py-1.5 text-[10px]"
+                  >
+                    <span className="text-gray-500">{formatMd(p.date)}</span>
+                    <span>
+                      <span className="font-bold">
+                        {formatWeight(p.weight, h.info.is_assisted)}
+                      </span>
+                      <span className="ml-2 text-gray-500">× {p.reps}回</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })}
     </div>
   );
 }

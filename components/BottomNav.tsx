@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 const tabs = [
   { label: "設定", href: "/settings" },
   { label: "メニュー", href: "/main" },
-  { label: "重量更新頻度", href: "/weight-history" },
+  { label: "重量推移", href: "/weight-history" },
 ];
 
 export default function BottomNav() {
