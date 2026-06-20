@@ -49,6 +49,8 @@ interface ProgressionSuggestion {
   // 'up' = 重量アップ提案、'down' = 重量ダウン提案、'hold' = まだ提案しない
   action: "up" | "down" | "hold";
   step: number;
+  // TOP 以外のセットで「予定回数に届かなかったもの」。重量判断には使わず、情報として表示するだけ。
+  backoffShortages: { setNumber: number; planned: number; actual: number }[];
 }
 
 const DAY_MAP: Record<number, string> = {
@@ -380,6 +382,17 @@ export default function MainPage() {
         action = "down";
       }
 
+      // TOP 以外で予定回数に届かなかったセット（情報表示用）。
+      // 進歩判定には使わない。
+      const backoffShortages = rows
+        .slice(0, -1)
+        .filter((r) => r.actual_reps < r.planned_reps)
+        .map((r) => ({
+          setNumber: r.set_number,
+          planned: r.planned_reps,
+          actual: r.actual_reps,
+        }));
+
       setProgression({
         exerciseId: actualsModal.exerciseId,
         exerciseName: actualsModal.exerciseName,
@@ -390,6 +403,7 @@ export default function MainPage() {
         streak,
         action,
         step: actualsModal.weightStep,
+        backoffShortages,
       });
 
       setActualsModal(null);
@@ -885,6 +899,27 @@ export default function MainPage() {
                   予定通りピッタリ。今の重量で安定中。
                 </p>
               )}
+
+              {/* 重量判定とは独立。バックオフ側で予定回数に届かなかったセットを情報表示。 */}
+              {progression.backoffShortages.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+                  <p className="text-[10px] font-bold text-amber-800 mb-1">
+                    バックオフで予定回数に届かなかったセット
+                  </p>
+                  {progression.backoffShortages.map((b) => (
+                    <p key={b.setNumber} className="text-[10px] text-amber-900">
+                      セット{b.setNumber}：予定 {b.planned}回 / 実 {b.actual}回
+                      <span className="ml-1 text-amber-700">
+                        (-{b.planned - b.actual})
+                      </span>
+                    </p>
+                  ))}
+                  <p className="text-[9px] text-amber-700 mt-1">
+                    続くようなら、バックオフの予定回数や％の見直しを検討
+                  </p>
+                </div>
+              )}
+
               {action === "up" && (
                 <p className="text-center text-base font-bold text-emerald-700 mb-4">
                   → {progression.isAssisted ? "補助を減らしましょう" : "重量を上げましょう"}
