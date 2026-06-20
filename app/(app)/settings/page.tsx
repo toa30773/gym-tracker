@@ -382,6 +382,17 @@ export default function SettingsPage() {
     });
   }
 
+  // 種目を隣と入れ替える。direction=-1 で 1 つ上、+1 で 1 つ下。
+  function moveExercise(exIdx: number, direction: -1 | 1) {
+    setMenuData((prev) => {
+      const target = exIdx + direction;
+      if (target < 0 || target >= prev.exercises.length) return prev;
+      const exercises = [...prev.exercises];
+      [exercises[exIdx], exercises[target]] = [exercises[target], exercises[exIdx]];
+      return { ...prev, exercises };
+    });
+  }
+
   function removeSet(exIdx: number, setIdx: number) {
     setMenuData((prev) => {
       const exercises = [...prev.exercises];
@@ -783,6 +794,24 @@ export default function SettingsPage() {
               >
                 ＋
               </button>
+              {exIdx > 0 && (
+                <button
+                  onClick={() => moveExercise(exIdx, -1)}
+                  className="w-6 h-6 flex items-center justify-center bg-gray-100 rounded-full text-[10px] leading-none flex-shrink-0 border border-gray-300"
+                  title="1つ上へ"
+                >
+                  ▲
+                </button>
+              )}
+              {exIdx < menuData.exercises.length - 1 && (
+                <button
+                  onClick={() => moveExercise(exIdx, 1)}
+                  className="w-6 h-6 flex items-center justify-center bg-gray-100 rounded-full text-[10px] leading-none flex-shrink-0 border border-gray-300"
+                  title="1つ下へ"
+                >
+                  ▼
+                </button>
+              )}
               {menuData.exercises.length > 1 && (
                 <button
                   onClick={() => removeExercise(exIdx)}
