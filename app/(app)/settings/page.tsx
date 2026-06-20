@@ -17,6 +17,7 @@ import {
   nowIso,
 } from "@/lib/local-db";
 import { getCurrentUserId, runSync, subscribeSync } from "@/lib/sync";
+import { useNavGuard } from "@/lib/nav-guard";
 import ScrollPicker from "@/components/ScrollPicker";
 import type { Menu, Exercise, WorkoutSet, MenuWithExercises } from "@/lib/types";
 import { WEIGHT_STEPS, buildWeightOptions, roundToStep } from "@/lib/types";
@@ -113,6 +114,13 @@ export default function SettingsPage() {
     setActionBarSlot(document.getElementById("app-action-bar-slot"));
   }, []);
   const [deleting, setDeleting] = useState(false);
+  // 現在の menuData が直近 load した内容と一致するかを判定するための基準値（JSON 文字列）
+  const [baseline, setBaseline] = useState<string>(() =>
+    JSON.stringify(defaultMenu(0)),
+  );
+  // 未保存ガード：BottomNav で別ページへ遷移しようとした時にここに proceed が積まれる
+  const [pendingProceed, setPendingProceed] = useState<(() => void) | null>(null);
+  const { registerGuard } = useNavGuard();
 
   const fetchMenus = useCallback(async () => {
     const userId = await getCurrentUserId();
@@ -124,7 +132,7 @@ export default function SettingsPage() {
   }, []);
 
   function loadMenu(m: MenuWithExercises) {
-    setMenuData({
+    const data: MenuData = {
       id: m.id,
       name: m.name,
       days: m.days || [],
@@ -152,7 +160,9 @@ export default function SettingsPage() {
                 })),
             }))
           : [defaultExercise()],
-    });
+    };
+    setMenuData(data);
+    setBaseline(JSON.stringify(data));
     setIntervalInput(m.interval_days ? String(m.interval_days) : "");
   }
 
@@ -211,7 +221,9 @@ export default function SettingsPage() {
       loadMenu(list[0]);
     } else {
       setCurrentIdx(0);
-      setMenuData(defaultMenu(0));
+      const d = defaultMenu(0);
+      setMenuData(d);
+      setBaseline(JSON.stringify(d));
       setIntervalInput("");
     }
     setConfirmDelete(false);
@@ -227,7 +239,9 @@ export default function SettingsPage() {
     if (newIdx < savedMenus.length) {
       loadMenu(savedMenus[newIdx]);
     } else {
-      setMenuData(defaultMenu(newIdx));
+      const d = defaultMenu(newIdx);
+      setMenuData(d);
+      setBaseline(JSON.stringify(d));
       setIntervalInput("");
     }
   }
@@ -394,6 +408,32 @@ export default function SettingsPage() {
     });
   }
 
+  // 未保存判定。baseline は最後に load / 初期化された snapshot。menuData が編集される
+  // たびに JSON が変わるので、不一致 = 未保存編集あり。
+  const isDirty = JSON.stringify(menuData) !== baseline;
+
+  // ブラウザのタブを閉じる／リロード時の警告（SPA 内遷移はこれでは捕まらない）
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
+  // BottomNav からの別ページ遷移を受け止める guard。
+  // proceed を pendingProceed に積んで確認モーダルを開く。
+  useEffect(() => {
+    if (!isDirty) {
+      registerGuard(null);
+      return;
+    }
+    registerGuard((proceed) => setPendingProceed(() => proceed));
+    return () => registerGuard(null);
+  }, [isDirty, registerGuard]);
+
   async function save() {
     setSaving(true);
     setMessage("");
@@ -530,7 +570,9 @@ export default function SettingsPage() {
         if (nextIdx < list.length) {
           loadMenu(list[nextIdx]);
         } else {
-          setMenuData(defaultMenu(nextIdx));
+          const d = defaultMenu(nextIdx);
+          setMenuData(d);
+          setBaseline(JSON.stringify(d));
           setIntervalInput("");
         }
       } else {
@@ -952,6 +994,53 @@ export default function SettingsPage() {
             >
               決定
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 未保存ガード確認モーダル */}
+      {pendingProceed && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center px-6"
+          onClick={() => setPendingProceed(null)}
+        >
+          <div
+            className="bg-white rounded-2xl p-5 max-w-xs w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-bold mb-1">未保存の変更があります</p>
+            <p className="text-[10px] text-gray-600 mb-4">
+              保存していない編集を破棄して移動しますか？
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={async () => {
+                  const proceed = pendingProceed;
+                  setPendingProceed(null);
+                  await save();
+                  proceed();
+                }}
+                className="py-2 bg-gray-800 text-white rounded-full text-xs font-bold"
+              >
+                保存して移動
+              </button>
+              <button
+                onClick={() => {
+                  const proceed = pendingProceed;
+                  setPendingProceed(null);
+                  proceed();
+                }}
+                className="py-2 bg-red-50 text-red-600 border border-red-200 rounded-full text-xs font-bold"
+              >
+                破棄して移動
+              </button>
+              <button
+                onClick={() => setPendingProceed(null)}
+                className="py-2 bg-gray-200 rounded-full text-xs font-bold"
+              >
+                キャンセル
+              </button>
+            </div>
           </div>
         </div>
       )}
