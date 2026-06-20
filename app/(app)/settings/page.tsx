@@ -79,6 +79,8 @@ export default function SettingsPage() {
   const [showDaySelector, setShowDaySelector] = useState(false);
   const [intervalInput, setIntervalInput] = useState("");
   const [showCopyModal, setShowCopyModal] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const touchStartX = useRef<number | null>(null);
 
   const fetchMenus = useCallback(async () => {
@@ -136,8 +138,32 @@ export default function SettingsPage() {
     });
   }, [fetchMenus]);
 
-  // 切替可能なメニュー数 = 保存済み + 次の1つ（最大3）
+  // 切替可能なメニュー数 = 保存済み + 次の1つ（最大MAX_MENUS）
   const visibleCount = Math.min(savedMenus.length + 1, MAX_MENUS);
+
+  async function deleteMenu() {
+    if (!menuData.id || deleting) return;
+    setDeleting(true);
+    const { error } = await supabase.from("menus").delete().eq("id", menuData.id);
+    if (error) {
+      console.error("メニュー削除に失敗しました", error);
+      setDeleting(false);
+      return;
+    }
+    const list = await fetchMenus();
+    if (list && list.length > 0) {
+      setCurrentIdx(0);
+      loadMenu(list[0]);
+    } else {
+      setCurrentIdx(0);
+      setMenuData(defaultMenu(0));
+      setIntervalInput("");
+    }
+    setConfirmDelete(false);
+    setDeleting(false);
+    setMessage("削除しました");
+    setTimeout(() => setMessage(""), 2000);
+  }
   const isNewMenu = currentIdx >= savedMenus.length;
 
   function switchMenu(newIdx: number) {
@@ -673,18 +699,6 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* 保存ボタン */}
-      <div className="flex items-center justify-end px-4 pb-2 gap-2">
-        {message && <span className="text-xs text-green-600">{message}</span>}
-        <button
-          onClick={save}
-          disabled={saving}
-          className="px-5 py-1.5 bg-gray-800 text-white rounded-full text-xs font-bold disabled:opacity-50"
-        >
-          {saving ? "保存中..." : "保存"}
-        </button>
-      </div>
-
       {/* メニュー切替インジケーター */}
       {visibleCount > 1 && (
         <div className="pb-2 pt-1">
@@ -710,6 +724,30 @@ export default function SettingsPage() {
           </p>
         </div>
       )}
+
+      {/* 保存バー（常時下部に固定） */}
+      <div className="sticky bottom-0 z-30 bg-white border-t border-gray-200 px-4 py-2 flex items-center justify-between gap-2">
+        {menuData.id ? (
+          <button
+            onClick={() => setConfirmDelete(true)}
+            className="text-xs text-red-500 underline"
+          >
+            このメニューを削除
+          </button>
+        ) : (
+          <span />
+        )}
+        <div className="flex items-center gap-2">
+          {message && <span className="text-xs text-green-600">{message}</span>}
+          <button
+            onClick={save}
+            disabled={saving}
+            className="px-5 py-1.5 bg-gray-800 text-white rounded-full text-xs font-bold disabled:opacity-50"
+          >
+            {saving ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </div>
 
       {/* スクロールピッカーモーダル */}
       {picker && (
@@ -757,6 +795,42 @@ export default function SettingsPage() {
             >
               決定
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 削除確認モーダル */}
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center px-6"
+          onClick={() => !deleting && setConfirmDelete(false)}
+        >
+          <div
+            className="bg-white rounded-2xl p-5 max-w-xs w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-bold mb-2">
+              「{menuData.name || "（無題）"}」を削除しますか？
+            </p>
+            <p className="text-[10px] text-gray-600 mb-4">
+              このメニューの種目・セット・重量更新履歴・実績データもすべて削除されます。元に戻せません。
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfirmDelete(false)}
+                disabled={deleting}
+                className="flex-1 py-2 bg-gray-200 rounded-full text-xs font-bold disabled:opacity-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={deleteMenu}
+                disabled={deleting}
+                className="flex-1 py-2 bg-red-500 text-white rounded-full text-xs font-bold disabled:opacity-50"
+              >
+                {deleting ? "削除中..." : "削除する"}
+              </button>
+            </div>
           </div>
         </div>
       )}
