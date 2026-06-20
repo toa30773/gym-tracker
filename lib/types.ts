@@ -79,6 +79,15 @@ export function roundToStep(value: number, step: number): number {
   return +value.toFixed(stepDecimals(step));
 }
 
+// アシスト種目で重量0 = 補助なし = 自重表示。
+// 通常種目は単純に "{n}kg"。
+export function formatWeight(weight: number, isAssisted: boolean): string {
+  if (isAssisted) {
+    return weight === 0 ? "自重" : `補助 ${weight}kg`;
+  }
+  return `${weight}kg`;
+}
+
 export function buildWeightOptions(step: number, max = 200, min = 0): number[] {
   const d = stepDecimals(step);
   const factor = Math.pow(10, d);

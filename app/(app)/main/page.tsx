@@ -17,7 +17,7 @@ import type {
   ExerciseWithSets,
   WorkoutSet,
 } from "@/lib/types";
-import { roundToStep } from "@/lib/types";
+import { roundToStep, formatWeight } from "@/lib/types";
 
 interface ActualRow {
   set_id: string;
@@ -57,10 +57,6 @@ const DAY_MAP: Record<number, string> = {
 };
 
 const COMPLETED_KEY_PREFIX = "completed-exercises-";
-
-function formatWeight(weight: number, isAssisted: boolean): string {
-  return isAssisted ? `補助 ${weight}kg` : `${weight}kg`;
-}
 
 function isMenuActiveToday(menu: Menu): boolean {
   const today = new Date();

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { getAllExercisesForUser, getAllSetLogsForUser } from "@/lib/local-db";
 import { getCurrentUserId } from "@/lib/sync";
+import { formatWeight } from "@/lib/types";
 
 interface ExerciseInfo {
   id: string;
@@ -41,10 +42,6 @@ function dateKey(iso: string): string {
 function formatMd(key: string): string {
   const [, m, d] = key.split("-");
   return `${parseInt(m, 10)}/${parseInt(d, 10)}`;
-}
-
-function formatWeight(w: number, isAssisted: boolean): string {
-  return isAssisted ? `補助 ${w}kg` : `${w}kg`;
 }
 
 function MiniLineChart({
