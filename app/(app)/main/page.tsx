@@ -370,12 +370,21 @@ export default function MainPage() {
         delta = 0;
         reason = "ギリギリ達成（限界まで挙げきった）。今週は同重量で安定させましょう";
       } else if ((rir !== null && rir >= 3) || excessSum >= 2 * setCount) {
-        delta = 2;
+        // 階段式: 超過量に応じて +2 / +3 / +4 を選ぶ
         const parts: string[] = [];
         if (excessSum > 0) parts.push(`合計 +${excessSum}回オーバー`);
         if (rir !== null && rir >= 3) parts.push(`最終セット 3+回残し`);
         const detail = parts.length > 0 ? `（${parts.join("、")}）` : "";
-        reason = `余裕で達成${detail}。大幅にアップできます`;
+        if (excessSum >= 4 * setCount) {
+          delta = 4;
+          reason = `明らかに重量が軽すぎる${detail}。大幅にアップしましょう`;
+        } else if (excessSum >= 3 * setCount) {
+          delta = 3;
+          reason = `重量がかなり軽い${detail}。しっかりアップしましょう`;
+        } else {
+          delta = 2;
+          reason = `余裕で達成${detail}。大幅にアップできます`;
+        }
       } else if (excessSum > 0 || (rir !== null && rir >= 1)) {
         delta = 1;
         const parts: string[] = [];
