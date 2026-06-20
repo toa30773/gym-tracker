@@ -49,9 +49,13 @@ interface ProgressionSuggestion {
   topActual: number;
   topDelta: number; // 実 - 予定
   streak: number; // 同じ方向（オーバー / 不足）が連続したセッション数（今回含む）
-  // 'up' = 重量アップ提案、'down' = 重量ダウン提案、'hold' = まだ提案しない
+  // 'up' = TOP のみ重量アップ提案、'down' = 全セット重量ダウン提案、'hold' = 提案なし
   action: "up" | "down" | "hold";
   step: number;
+  // 全セットの重量が同一か。UP は揃ってる時しか提案しない（揃ってないなら upBlocked になる）。
+  allEqual: boolean;
+  // UP の信号は立ったが全セット未揃いのため現状維持
+  upBlocked: boolean;
   // TOP 以外のセットで「予定回数に届かなかったもの」。重量判断には使わず、情報として表示するだけ。
   backoffShortages: { setNumber: number; planned: number; actual: number }[];
 }
@@ -106,6 +110,8 @@ export default function MainPage() {
   const [savingActuals, setSavingActuals] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [progression, setProgression] = useState<ProgressionSuggestion | null>(null);
+  // 「計画に反映」で実際に上げ下げする kg（文字列で持っておくと空欄編集中の状態が綺麗）
+  const [progressionDeltaInput, setProgressionDeltaInput] = useState<string>("");
   const swipeStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
   const lastDateRef = useRef<string>(todayKey());
 
@@ -383,10 +389,20 @@ export default function MainPage() {
       // 大幅（±3 回以上）は 1 回で提案、そうでなければ 2 セッション連続で提案。
       const STREAK_THRESHOLD = 2;
       const BIG_DELTA = 3;
+      // 全セットの重量が TOP と揃っているか（=ストレートに整っている）。
+      // 揃ってない時は UP 信号を出してもユーザーはまずバックオフを追いつかせるべき。
+      const baseWeight = rows[0]?.planned_weight ?? 0;
+      const allEqual = rows.every((r) => r.planned_weight === baseWeight);
       let action: "up" | "down" | "hold" = "hold";
-      if (sign > 0 && (Math.abs(topDelta) >= BIG_DELTA || streak >= STREAK_THRESHOLD)) {
-        action = "up";
-      } else if (sign < 0 && (Math.abs(topDelta) >= BIG_DELTA || streak >= STREAK_THRESHOLD)) {
+      let upBlocked = false;
+      const upSignal =
+        sign > 0 && (Math.abs(topDelta) >= BIG_DELTA || streak >= STREAK_THRESHOLD);
+      const downSignal =
+        sign < 0 && (Math.abs(topDelta) >= BIG_DELTA || streak >= STREAK_THRESHOLD);
+      if (upSignal) {
+        if (allEqual) action = "up";
+        else upBlocked = true;
+      } else if (downSignal) {
         action = "down";
       }
 
@@ -411,8 +427,11 @@ export default function MainPage() {
         streak,
         action,
         step: actualsModal.weightStep,
+        allEqual,
+        upBlocked,
         backoffShortages,
       });
+      setProgressionDeltaInput(String(actualsModal.weightStep));
 
       setActualsModal(null);
     } finally {
@@ -435,36 +454,28 @@ export default function MainPage() {
       return;
     }
 
+    // ユーザーが指定した kg。空欄や 0 以下は無効として扱う。
+    const deltaKg = parseFloat(progressionDeltaInput);
+    if (!Number.isFinite(deltaKg) || deltaKg <= 0) {
+      setProgression(null);
+      return;
+    }
+
     const direction = progression.isAssisted ? -1 : 1;
     const sign = progression.action === "up" ? 1 : -1;
     const sortedSets = [...ex.sets].sort((a, b) => a.set_number - b.set_number);
     const top = sortedSets[sortedSets.length - 1];
-    const newTopWeight = Math.max(
-      0,
-      roundToStep(
-        top.weight + sign * progression.step * direction,
-        progression.step,
-      ),
-    );
 
-    for (const s of sortedSets) {
-      let newWeight: number;
-      if (s.id === top.id) {
-        newWeight = newTopWeight;
-      } else if (s.backoff_ratio !== null && s.backoff_ratio !== undefined) {
-        newWeight = Math.max(
-          0,
-          roundToStep(newTopWeight * s.backoff_ratio, progression.step),
-        );
-      } else {
-        newWeight = Math.max(
-          0,
-          roundToStep(
-            s.weight + sign * progression.step * direction,
-            progression.step,
-          ),
-        );
-      }
+    // UP: TOP のみ。バックオフはユーザー判断で後から手動で追いつかせる。
+    // DOWN: 全セットを同じ kg 分一律で下げる（アシストは方向逆）。
+    const targets =
+      progression.action === "up" ? [top] : sortedSets;
+
+    for (const s of targets) {
+      const newWeight = Math.max(
+        0,
+        roundToStep(s.weight + sign * deltaKg * direction, progression.step),
+      );
       if (newWeight === s.weight) continue;
       try {
         await updateSetLocal({
@@ -944,16 +955,63 @@ export default function MainPage() {
               )}
 
               {action === "up" && (
-                <p className="text-center text-base font-bold text-emerald-700 mb-4">
-                  → {progression.isAssisted ? "補助を減らしましょう" : "重量を上げましょう"}
-                </p>
+                <div className="mb-4">
+                  <p className="text-center text-base font-bold text-emerald-700 mb-2">
+                    → {progression.isAssisted
+                      ? "補助を減らしましょう"
+                      : "重量を上げましょう"}
+                  </p>
+                  <div className="flex items-center justify-center gap-2 text-xs">
+                    <span>TOP に</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      step={progression.step}
+                      value={progressionDeltaInput}
+                      placeholder={String(progression.step)}
+                      onChange={(e) => setProgressionDeltaInput(e.target.value)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="w-16 text-center text-base font-bold bg-gray-100 rounded outline-none py-1"
+                    />
+                    <span>kg を加算</span>
+                  </div>
+                  <p className="text-center text-[10px] text-gray-500 mt-1">
+                    他のセットはそのまま。自分の判断で後から追いつかせてください。
+                  </p>
+                </div>
               )}
               {action === "down" && (
-                <p className="text-center text-base font-bold text-red-600 mb-4">
-                  → {progression.isAssisted ? "補助を増やしましょう" : "重量を下げましょう"}
+                <div className="mb-4">
+                  <p className="text-center text-base font-bold text-red-600 mb-2">
+                    → {progression.isAssisted
+                      ? "補助を増やしましょう"
+                      : "重量を下げましょう"}
+                  </p>
+                  <div className="flex items-center justify-center gap-2 text-xs">
+                    <span>全セットから</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      step={progression.step}
+                      value={progressionDeltaInput}
+                      placeholder={String(progression.step)}
+                      onChange={(e) => setProgressionDeltaInput(e.target.value)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="w-16 text-center text-base font-bold bg-gray-100 rounded outline-none py-1"
+                    />
+                    <span>kg を減算</span>
+                  </div>
+                </div>
+              )}
+              {progression.upBlocked && (
+                <p className="text-center text-xs text-gray-600 mb-4 px-2">
+                  TOP は調子よいけど、他のセットがまだ TOP の重量に追いついていません。
+                  まずバックオフの重量を上げて揃ってから次回の signal を待ちましょう。
                 </p>
               )}
-              {action === "hold" && sign !== 0 && (
+              {action === "hold" && !progression.upBlocked && sign !== 0 && (
                 <p className="text-center text-xs text-gray-500 mb-4">
                   あと {Math.max(0, STREAK_NEEDED - streak)} セッション同じ調子なら提案します
                 </p>
