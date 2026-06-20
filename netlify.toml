@@ -7,3 +7,16 @@
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# Service Worker と manifest はキャッシュさせない。
+# ここを長期キャッシュにすると、新バージョンを配信しても既存ブラウザが
+# 古い sw.js を取り続けて自動更新が壊れる。
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Cache-Control = "no-cache"
