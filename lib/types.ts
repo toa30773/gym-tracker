@@ -29,6 +29,9 @@ export interface WorkoutSet {
   reps: number;
   machine_height: string | null;
   memo: string | null;
+  // null = 独立セット（直接重量指定）。最終セット = トップとして扱う。
+  // それ以外 = トップ重量に対する比率（例: 0.85 = トップの85%）。
+  backoff_ratio: number | null;
 }
 
 export interface WeightUpdate {

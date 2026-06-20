@@ -32,7 +32,34 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
         <script
           dangerouslySetInnerHTML={{
-            __html: `if ('serviceWorker' in navigator) { window.addEventListener('load', function() { navigator.serviceWorker.register('/sw.js'); }); }`,
+            __html: `(function () {
+  if (!('serviceWorker' in navigator)) return;
+  var reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', function () {
+    if (reloading) return;
+    reloading = true;
+    window.location.reload();
+  });
+  function activate(worker) {
+    if (!worker) return;
+    worker.postMessage('SKIP_WAITING');
+  }
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').then(function (reg) {
+      if (reg.waiting && navigator.serviceWorker.controller) activate(reg.waiting);
+      reg.addEventListener('updatefound', function () {
+        var nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', function () {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            activate(nw);
+          }
+        });
+      });
+      setInterval(function () { reg.update().catch(function () {}); }, 60 * 60 * 1000);
+    }).catch(function () {});
+  });
+})();`,
           }}
         />
       </head>

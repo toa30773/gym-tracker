@@ -45,6 +45,10 @@ create table if not exists sets (
 -- 重量カラムを numeric に拡張（0.25 刻みなど対応）
 alter table sets alter column weight type numeric;
 
+-- バックオフセットの比率（トップ=最終セットの重量に対する比率、0..1）
+-- NULL のセット = ユーザーが直接重量指定（独立）。最終セット = トップ扱い
+alter table sets add column if not exists backoff_ratio numeric;
+
 -- 重量更新履歴
 create table if not exists weight_updates (
   id uuid primary key default gen_random_uuid(),

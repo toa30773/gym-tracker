@@ -1,10 +1,24 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
+import {
+  getMenusWithExercisesForUser,
+  putMenu,
+  updateMenu,
+  deleteMenuLocal,
+  putExercise,
+  updateExercise as updateExerciseLocal,
+  deleteExerciseLocal,
+  putSet,
+  updateSet as updateSetLocal,
+  deleteSetLocal,
+  newId,
+  nowIso,
+} from "@/lib/local-db";
+import { getCurrentUserId, runSync } from "@/lib/sync";
 import ScrollPicker from "@/components/ScrollPicker";
-import type { MenuWithExercises, WorkoutSet } from "@/lib/types";
-import { WEIGHT_STEPS, buildWeightOptions } from "@/lib/types";
+import type { Menu, Exercise, WorkoutSet, MenuWithExercises } from "@/lib/types";
+import { WEIGHT_STEPS, buildWeightOptions, roundToStep } from "@/lib/types";
 
 const BODY_PARTS = ["胸", "背中", "肩", "腕", "脚", "腹", "体幹", "全身"];
 const DAYS = ["月", "火", "水", "木", "金", "土", "日"];
@@ -17,6 +31,8 @@ interface SetData {
   weight: number;
   reps: number;
   machine_height: string;
+  // 0..1 の比率。null = 直接重量指定。最終セット = トップ（比率は無視されて weight が使われる）
+  backoff_ratio: number | null;
 }
 
 interface ExerciseData {
@@ -41,14 +57,20 @@ interface MenuData {
 type PickerTarget = {
   exIdx: number;
   setIdx: number;
-  field: "weight" | "reps" | "body_part";
+  field: "weight" | "reps" | "body_part" | "ratio";
 } | null;
 
-const defaultSet = (n: number): SetData => ({
+// 50%〜95% を 5% 刻みで（トップは別扱いなので 100% は含めない）
+const RATIO_PCT_OPTIONS = Array.from({ length: 10 }, (_, i) => 50 + i * 5);
+
+// 新規セットのデフォルト。新規追加のセットは「バックオフ85%」をデフォルトに、
+// 最終セットは UI で扱う。set_number 1（最初の追加）は実重量モード。
+const defaultSet = (n: number, ratio: number | null = 0.85): SetData => ({
   set_number: n,
   weight: 20,
   reps: 10,
   machine_height: "",
+  backoff_ratio: ratio,
 });
 
 const defaultExercise = (): ExerciseData => ({
@@ -57,7 +79,8 @@ const defaultExercise = (): ExerciseData => ({
   memo: "",
   weight_step: 2.5,
   is_assisted: false,
-  sets: [defaultSet(1)],
+  // セットが1つのとき = それがトップ。比率は null（直接重量指定）
+  sets: [defaultSet(1, null)],
 });
 
 const defaultMenu = (idx: number): MenuData => ({
@@ -69,7 +92,6 @@ const defaultMenu = (idx: number): MenuData => ({
 });
 
 export default function SettingsPage() {
-  const supabase = createClient();
   const [savedMenus, setSavedMenus] = useState<MenuWithExercises[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [menuData, setMenuData] = useState<MenuData>(defaultMenu(0));
@@ -84,19 +106,13 @@ export default function SettingsPage() {
   const touchStartX = useRef<number | null>(null);
 
   const fetchMenus = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const userId = await getCurrentUserId();
+    if (!userId) return;
 
-    const { data } = await supabase
-      .from("menus")
-      .select("*, exercises(*, sets(*))")
-      .eq("user_id", user.id)
-      .order("order_index");
-
-    const list = (data || []) as MenuWithExercises[];
+    const list = (await getMenusWithExercisesForUser(userId)) as MenuWithExercises[];
     setSavedMenus(list);
     return list;
-  }, [supabase]);
+  }, []);
 
   function loadMenu(m: MenuWithExercises) {
     setMenuData({
@@ -122,6 +138,7 @@ export default function SettingsPage() {
                   weight: s.weight,
                   reps: s.reps,
                   machine_height: s.machine_height || "",
+                  backoff_ratio: s.backoff_ratio ?? null,
                 })),
             }))
           : [defaultExercise()],
@@ -144,12 +161,19 @@ export default function SettingsPage() {
   async function deleteMenu() {
     if (!menuData.id || deleting) return;
     setDeleting(true);
-    const { error } = await supabase.from("menus").delete().eq("id", menuData.id);
-    if (error) {
-      console.error("メニュー削除に失敗しました", error);
+    const userId = await getCurrentUserId();
+    if (!userId) {
       setDeleting(false);
       return;
     }
+    try {
+      await deleteMenuLocal(menuData.id, userId);
+    } catch (e) {
+      console.error("メニュー削除に失敗しました", e);
+      setDeleting(false);
+      return;
+    }
+    runSync().catch(() => {});
     const list = await fetchMenus();
     if (list && list.length > 0) {
       setCurrentIdx(0);
@@ -205,7 +229,7 @@ export default function SettingsPage() {
         memo: "",
         weight_step: 2.5,
         is_assisted: false,
-        sets: [defaultSet(1)],
+        sets: [defaultSet(1, null)],
       };
       const exercises = [...prev.exercises];
       exercises.splice(exIdx + 1, 0, copy);
@@ -237,6 +261,8 @@ export default function SettingsPage() {
         weight: s.weight,
         reps: s.reps,
         machine_height: s.machine_height || "",
+        backoff_ratio:
+          i === sortedSets.length - 1 ? null : s.backoff_ratio ?? null,
       })),
     };
     setMenuData((prev) => ({
@@ -258,19 +284,42 @@ export default function SettingsPage() {
       const exercises = [...prev.exercises];
       const ex = { ...exercises[exIdx] };
       if (ex.sets.length <= 1) return prev;
-      ex.sets = ex.sets
-        .filter((_, i) => i !== setIdx)
-        .map((s, i) => ({ ...s, set_number: i + 1 }));
+      const list = ex.sets.filter((_, i) => i !== setIdx);
+      ex.sets = list.map((s, i) => ({
+        ...s,
+        set_number: i + 1,
+        // 末尾 = トップ なので、削除で末尾が変わる可能性があり ratio を正規化する
+        backoff_ratio: i === list.length - 1 ? null : s.backoff_ratio ?? 0.85,
+      }));
       exercises[exIdx] = ex;
       return { ...prev, exercises };
     });
   }
 
+  // 末尾 = トップを保つため、新規セットは「末尾の1つ前」に挿入し、デフォルト 85% バックオフにする。
+  // セット番号は全体を振り直す。
   function addSet(exIdx: number) {
     setMenuData((prev) => {
       const exercises = [...prev.exercises];
       const ex = { ...exercises[exIdx] };
-      ex.sets = [...ex.sets, defaultSet(ex.sets.length + 1)];
+      const insertAt = Math.max(0, ex.sets.length - 1);
+      const top = ex.sets[ex.sets.length - 1];
+      // 追加前にトップが ratio を持っていれば独立扱いに直す（最終セットだけがトップなので）
+      const newSet: SetData = {
+        set_number: 0,
+        weight: top ? top.weight : 20,
+        reps: top ? top.reps : 10,
+        machine_height: "",
+        backoff_ratio: 0.85,
+      };
+      const list = [...ex.sets];
+      list.splice(insertAt, 0, newSet);
+      ex.sets = list.map((s, i) => ({
+        ...s,
+        set_number: i + 1,
+        // 最終セット（=トップ）は ratio を null に正規化
+        backoff_ratio: i === list.length - 1 ? null : s.backoff_ratio,
+      }));
       exercises[exIdx] = ex;
       return { ...prev, exercises };
     });
@@ -301,115 +350,125 @@ export default function SettingsPage() {
   async function save() {
     setSaving(true);
     setMessage("");
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setSaving(false); return; }
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      setSaving(false);
+      return;
+    }
+
+    // 既存メニューの保存前スナップショット（差分削除に使う）
+    const existingBeforeSave = savedMenus.find((m) => m.id === menuData.id) || null;
 
     let menuId = menuData.id;
-    const menuPayload = {
+    const isNewMenuLocal = !menuId;
+
+    const menuRecord: Menu = {
+      id: menuId || newId(),
+      user_id: userId,
       name: menuData.name,
       days: menuData.days,
       interval_days: menuData.interval_days,
       start_date: menuData.start_date,
+      order_index: existingBeforeSave?.order_index ?? currentIdx,
+      created_at: existingBeforeSave?.created_at ?? nowIso(),
     };
 
-    if (!menuId) {
-      const { data, error } = await supabase
-        .from("menus")
-        .insert({ user_id: user.id, ...menuPayload, order_index: currentIdx })
-        .select()
-        .single();
-      if (error || !data) {
-        setMessage("保存に失敗しました");
-        setSaving(false);
-        return;
-      }
-      menuId = data.id;
-    } else {
-      await supabase.from("menus").update(menuPayload).eq("id", menuId);
-    }
-
-    const keepExerciseIds: string[] = [];
-
-    for (let i = 0; i < menuData.exercises.length; i++) {
-      const ex = menuData.exercises[i];
-      let exId = ex.id;
-      const exPayload = {
-        body_part: ex.body_part || "胸",
-        name: ex.name,
-        order_index: i,
-        weight_step: ex.weight_step,
-        is_assisted: ex.is_assisted,
-      };
-
-      if (!exId) {
-        const { data } = await supabase
-          .from("exercises")
-          .insert({ menu_id: menuId!, user_id: user.id, ...exPayload })
-          .select()
-          .single();
-        exId = data?.id;
+    try {
+      if (isNewMenuLocal) {
+        await putMenu(menuRecord, { enqueue: true });
+        menuId = menuRecord.id;
       } else {
-        await supabase.from("exercises").update(exPayload).eq("id", exId);
+        await updateMenu(menuRecord);
       }
-      if (!exId) continue;
-      keepExerciseIds.push(exId);
 
-      // 椅子の高さは set[0] のみUIで編集するので、全セットに伝播させる
-      const sharedMachineHeight = ex.sets[0]?.machine_height || null;
+      const keepExerciseIds: string[] = [];
 
-      const keepSetIds: string[] = [];
-      for (const s of ex.sets) {
-        const setPayload = {
-          weight: s.weight,
-          reps: s.reps,
-          machine_height: sharedMachineHeight,
-          memo: ex.memo || null,
+      for (let i = 0; i < menuData.exercises.length; i++) {
+        const ex = menuData.exercises[i];
+        const isNewExercise = !ex.id;
+        const exerciseRecord: Exercise = {
+          id: ex.id || newId(),
+          menu_id: menuId!,
+          user_id: userId,
+          body_part: ex.body_part || "胸",
+          name: ex.name,
+          order_index: i,
+          weight_step: ex.weight_step,
+          is_assisted: ex.is_assisted,
         };
-        if (!s.id) {
-          const { data } = await supabase
-            .from("sets")
-            .insert({
-              exercise_id: exId,
-              user_id: user.id,
-              set_number: s.set_number,
-              ...setPayload,
-            })
-            .select()
-            .single();
-          if (data?.id) keepSetIds.push(data.id);
+
+        if (isNewExercise) {
+          await putExercise(exerciseRecord, { enqueue: true });
         } else {
-          await supabase
-            .from("sets")
-            .update({ set_number: s.set_number, ...setPayload })
-            .eq("id", s.id);
-          keepSetIds.push(s.id);
+          await updateExerciseLocal(exerciseRecord);
+        }
+        keepExerciseIds.push(exerciseRecord.id);
+
+        // 椅子の高さは set[0] のみUIで編集するので、全セットに伝播させる
+        const sharedMachineHeight = ex.sets[0]?.machine_height || null;
+
+        // トップ重量を確定（=最終セット）→ バックオフは ratio で計算
+        const topWeight = ex.sets[ex.sets.length - 1]?.weight ?? 0;
+
+        const keepSetIds: string[] = [];
+        for (let setIdx = 0; setIdx < ex.sets.length; setIdx++) {
+          const s = ex.sets[setIdx];
+          const isLastSet = setIdx === ex.sets.length - 1;
+          const ratio = isLastSet ? null : s.backoff_ratio;
+          // 比率があるバックオフは保存時に実重量を計算（=表示は既存ロジックでそのまま使える）
+          const computedWeight =
+            ratio !== null && ratio !== undefined
+              ? Math.max(0, roundToStep(topWeight * ratio, ex.weight_step))
+              : s.weight;
+          const isNewSet = !s.id;
+          const setRecord: WorkoutSet = {
+            id: s.id || newId(),
+            exercise_id: exerciseRecord.id,
+            user_id: userId,
+            set_number: s.set_number,
+            weight: computedWeight,
+            reps: s.reps,
+            machine_height: sharedMachineHeight,
+            memo: ex.memo || null,
+            backoff_ratio: ratio,
+          };
+          if (isNewSet) {
+            await putSet(setRecord, { enqueue: true });
+          } else {
+            await updateSetLocal(setRecord);
+          }
+          keepSetIds.push(setRecord.id);
+        }
+
+        // 削除されたセットを片付ける（既存種目の場合のみ）
+        if (!isNewExercise && existingBeforeSave) {
+          const before = existingBeforeSave.exercises.find((e) => e.id === ex.id);
+          if (before) {
+            for (const oldSet of before.sets) {
+              if (!keepSetIds.includes(oldSet.id)) {
+                await deleteSetLocal(oldSet.id, userId);
+              }
+            }
+          }
         }
       }
 
-      // この種目で不要になったセットを削除
-      const { data: existingSets } = await supabase
-        .from("sets")
-        .select("id")
-        .eq("exercise_id", exId);
-      const toDeleteSets = (existingSets || [])
-        .map((r: { id: string }) => r.id)
-        .filter((id: string) => !keepSetIds.includes(id));
-      if (toDeleteSets.length > 0) {
-        await supabase.from("sets").delete().in("id", toDeleteSets);
+      // 削除された種目を片付ける
+      if (existingBeforeSave) {
+        for (const oldEx of existingBeforeSave.exercises) {
+          if (!keepExerciseIds.includes(oldEx.id)) {
+            await deleteExerciseLocal(oldEx.id, userId);
+          }
+        }
       }
+    } catch (e) {
+      console.error("保存に失敗しました", e);
+      setMessage("保存に失敗しました");
+      setSaving(false);
+      return;
     }
 
-    // 削除された種目をDBから消す
-    const { data: existingEx } = await supabase
-      .from("exercises")
-      .select("id")
-      .eq("menu_id", menuId!);
-    const toDeleteEx = (existingEx || [])
-      .map((r: { id: string }) => r.id)
-      .filter((id: string) => !keepExerciseIds.includes(id));
-    if (toDeleteEx.length > 0) {
-      await supabase.from("exercises").delete().in("id", toDeleteEx);
-    }
+    runSync().catch(() => {});
 
     setMessage("保存しました");
     setSaving(false);
@@ -627,44 +686,76 @@ export default function SettingsPage() {
               </label>
             </div>
 
-            {/* セットリスト */}
-            {ex.sets.map((s, setIdx) => (
-              <div key={setIdx} className="flex items-center gap-1.5 mb-2 pl-4">
-                <div className="flex items-center justify-center w-5 h-5 bg-gray-300 rounded text-xs flex-shrink-0">
-                  {s.set_number}
+            {/* セットリスト：末尾がトップ、それ以外は「トップの%」で表示・編集 */}
+            {ex.sets.map((s, setIdx) => {
+              const isTop = setIdx === ex.sets.length - 1;
+              const topWeight = ex.sets[ex.sets.length - 1]?.weight ?? 0;
+              const ratio = s.backoff_ratio;
+              const computedWeight =
+                !isTop && ratio !== null && ratio !== undefined
+                  ? roundToStep(topWeight * ratio, ex.weight_step)
+                  : s.weight;
+              return (
+                <div key={setIdx} className="flex items-center gap-1.5 mb-2 pl-4">
+                  <div
+                    className={`flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold flex-shrink-0 ${
+                      isTop ? "bg-gray-800 text-white" : "bg-gray-300"
+                    }`}
+                  >
+                    {s.set_number}
+                  </div>
+                  {isTop ? (
+                    <>
+                      <span className="text-[10px] font-bold text-gray-700 px-1">TOP</span>
+                      <button
+                        className="flex-1 bg-gray-200 rounded-full py-1.5 text-xs text-center"
+                        onClick={() => setPicker({ exIdx, setIdx, field: "weight" })}
+                      >
+                        {s.weight}kg
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="bg-gray-200 rounded-full py-1.5 px-3 text-xs text-center"
+                        onClick={() => setPicker({ exIdx, setIdx, field: "ratio" })}
+                      >
+                        {ratio !== null && ratio !== undefined
+                          ? `${Math.round(ratio * 100)}%`
+                          : "—%"}
+                      </button>
+                      <span className="flex-1 text-[10px] text-gray-500 text-center">
+                        {computedWeight}kg
+                      </span>
+                    </>
+                  )}
+                  <button
+                    className="flex-1 bg-gray-200 rounded-full py-1.5 text-xs text-center"
+                    onClick={() => setPicker({ exIdx, setIdx, field: "reps" })}
+                  >
+                    {s.reps}回
+                  </button>
+                  {ex.sets.length > 1 && (
+                    <button
+                      onClick={() => removeSet(exIdx, setIdx)}
+                      className="w-6 h-6 flex items-center justify-center bg-red-100 text-red-600 rounded-full text-sm font-bold leading-none flex-shrink-0 border border-red-300"
+                      title="セットを削除"
+                    >
+                      −
+                    </button>
+                  )}
+                  {isTop && (
+                    <button
+                      onClick={() => addSet(exIdx)}
+                      className="w-6 h-6 flex items-center justify-center bg-gray-200 rounded-full text-base font-bold leading-none flex-shrink-0"
+                      title="バックオフセットを追加"
+                    >
+                      ＋
+                    </button>
+                  )}
                 </div>
-                <button
-                  className="flex-1 bg-gray-200 rounded-full py-1.5 text-xs text-center"
-                  onClick={() => setPicker({ exIdx, setIdx, field: "weight" })}
-                >
-                  {s.weight}kg
-                </button>
-                <button
-                  className="flex-1 bg-gray-200 rounded-full py-1.5 text-xs text-center"
-                  onClick={() => setPicker({ exIdx, setIdx, field: "reps" })}
-                >
-                  {s.reps}回
-                </button>
-                {ex.sets.length > 1 && (
-                  <button
-                    onClick={() => removeSet(exIdx, setIdx)}
-                    className="w-6 h-6 flex items-center justify-center bg-red-100 text-red-600 rounded-full text-sm font-bold leading-none flex-shrink-0 border border-red-300"
-                    title="セットを削除"
-                  >
-                    −
-                  </button>
-                )}
-                {setIdx === ex.sets.length - 1 && (
-                  <button
-                    onClick={() => addSet(exIdx)}
-                    className="w-6 h-6 flex items-center justify-center bg-gray-200 rounded-full text-base font-bold leading-none flex-shrink-0"
-                    title="セットを追加"
-                  >
-                    ＋
-                  </button>
-                )}
-              </div>
-            ))}
+              );
+            })}
 
             {/* メモ */}
             <textarea
@@ -761,9 +852,11 @@ export default function SettingsPage() {
           >
             <p className="text-center text-xs font-bold mb-2">
               {picker.field === "weight"
-                ? "重量を選択（kg）"
+                ? "トップ重量を選択（kg）"
                 : picker.field === "reps"
                 ? "レップ数を選択"
+                : picker.field === "ratio"
+                ? "トップに対する％を選択"
                 : "部位を選択"}
             </p>
             <ScrollPicker
@@ -772,6 +865,8 @@ export default function SettingsPage() {
                   ? buildWeightOptions(menuData.exercises[picker.exIdx].weight_step)
                   : picker.field === "reps"
                   ? REPS
+                  : picker.field === "ratio"
+                  ? RATIO_PCT_OPTIONS
                   : BODY_PARTS
               }
               value={
@@ -779,11 +874,18 @@ export default function SettingsPage() {
                   ? menuData.exercises[picker.exIdx].sets[picker.setIdx].weight
                   : picker.field === "reps"
                   ? menuData.exercises[picker.exIdx].sets[picker.setIdx].reps
+                  : picker.field === "ratio"
+                  ? Math.round(
+                      ((menuData.exercises[picker.exIdx].sets[picker.setIdx]
+                        .backoff_ratio ?? 0.85) as number) * 100
+                    )
                   : menuData.exercises[picker.exIdx].body_part
               }
               onChange={(val) => {
                 if (picker.field === "body_part") {
                   updateExercise(picker.exIdx, "body_part", String(val));
+                } else if (picker.field === "ratio") {
+                  updateSet(picker.exIdx, picker.setIdx, "backoff_ratio", (val as number) / 100);
                 } else {
                   updateSet(picker.exIdx, picker.setIdx, picker.field, val as number);
                 }

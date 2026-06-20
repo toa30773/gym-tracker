@@ -4,12 +4,15 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/stamp-sw.mjs",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "stamp-sw": "node scripts/stamp-sw.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.108.2",
+    "idb": "^8.0.3",
     "next": "16.2.9",
     "react": "19.2.4",
     "react-dom": "19.2.4"

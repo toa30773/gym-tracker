@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { getAllExercisesForUser, getSetLogsForUser } from "@/lib/local-db";
+import { getCurrentUserId } from "@/lib/sync";
 
 interface ExerciseInfo {
   id: string;
@@ -123,37 +124,36 @@ function MiniLineChart({
 }
 
 export default function WeightHistoryPage() {
-  const supabase = createClient();
   const [histories, setHistories] = useState<ExerciseHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState<string | null>(null);
 
   const fetchHistory = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
+    const userId = await getCurrentUserId();
+    if (!userId) {
       setLoading(false);
       return;
     }
 
-    const { data: exData } = await supabase
-      .from("exercises")
-      .select("id, name, body_part, is_assisted")
-      .eq("user_id", user.id);
+    const [exData, logData] = await Promise.all([
+      getAllExercisesForUser(userId),
+      getSetLogsForUser(userId),
+    ]);
 
-    const { data: logData } = await supabase
-      .from("set_logs")
-      .select("exercise_id, performed_at, actual_weight, actual_reps, set_number")
-      .eq("user_id", user.id)
-      .order("performed_at", { ascending: true });
-
-    const exercises: ExerciseInfo[] = (exData || []).map((e) => ({
+    const exercises: ExerciseInfo[] = exData.map((e) => ({
       id: e.id,
       name: e.name,
       body_part: e.body_part,
       is_assisted: e.is_assisted ?? false,
     }));
 
-    const logs: LogRow[] = (logData || []) as LogRow[];
+    const logs: LogRow[] = logData.map((l) => ({
+      exercise_id: l.exercise_id,
+      performed_at: l.performed_at,
+      actual_weight: l.actual_weight,
+      actual_reps: l.actual_reps,
+      set_number: l.set_number,
+    }));
 
     // exercise_id ごとにグループ化
     const byEx = new Map<string, LogRow[]>();
@@ -197,7 +197,7 @@ export default function WeightHistoryPage() {
 
     setHistories(results);
     setLoading(false);
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     fetchHistory();

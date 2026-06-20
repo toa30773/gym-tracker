@@ -1,8 +1,22 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
-import type { Menu, MenuWithExercises, ExerciseWithSets, WorkoutSet } from "@/lib/types";
+import {
+  getMenusWithExercisesForUser,
+  getWeightUpdateCountsForSets,
+  updateSet as updateSetLocal,
+  putSetLog,
+  putWeightUpdate,
+  newId,
+  nowIso,
+} from "@/lib/local-db";
+import { getCurrentUserId, runSync } from "@/lib/sync";
+import type {
+  Menu,
+  MenuWithExercises,
+  ExerciseWithSets,
+  WorkoutSet,
+} from "@/lib/types";
 import { roundToStep } from "@/lib/types";
 
 interface ActualRow {
@@ -12,6 +26,7 @@ interface ActualRow {
   planned_reps: number;
   actual_weight: number;
   actual_reps: number;
+  backoff_ratio: number | null;
 }
 
 interface ActualsModal {
@@ -69,7 +84,6 @@ function todayKey(): string {
 }
 
 export default function MainPage() {
-  const supabase = createClient();
   const [menu, setMenu] = useState<MenuWithExercises | null>(null);
   const [updateCounts, setUpdateCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -106,14 +120,13 @@ export default function MainPage() {
   }, [syncDay]);
 
   const fetchTodayMenu = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
 
-    const { data: allMenus } = await supabase
-      .from("menus")
-      .select("*, exercises(*, sets(*))")
-      .eq("user_id", user.id)
-      .order("order_index");
+    const allMenus = await getMenusWithExercisesForUser(userId);
 
     if (!allMenus || allMenus.length === 0) {
       setMenu(null);
@@ -180,15 +193,7 @@ export default function MainPage() {
     // 重量更新回数を取得
     const setIds = combinedMenu.exercises.flatMap((ex) => ex.sets.map((s) => s.id));
     if (setIds.length > 0) {
-      const { data: updates } = await supabase
-        .from("weight_updates")
-        .select("set_id")
-        .in("set_id", setIds);
-
-      const counts: Record<string, number> = {};
-      (updates || []).forEach((u: { set_id: string }) => {
-        counts[u.set_id] = (counts[u.set_id] || 0) + 1;
-      });
+      const counts = await getWeightUpdateCountsForSets(setIds);
       const exCounts: Record<string, number> = {};
       combinedMenu.exercises.forEach((ex) => {
         exCounts[ex.id] = ex.sets.reduce(
@@ -202,7 +207,7 @@ export default function MainPage() {
     }
 
     setLoading(false);
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     fetchTodayMenu();
@@ -229,13 +234,15 @@ export default function MainPage() {
 
   async function saveMemo(exerciseId: string, setIds: string[], memo: string) {
     setSavingMemo(exerciseId);
-    const { error } = await supabase
-      .from("sets")
-      .update({ memo: memo || null })
-      .in("id", setIds);
-    if (error) {
-      console.error("メモの保存に失敗しました", error);
-    } else {
+    try {
+      const target = menu?.exercises.find((e) => e.id === exerciseId);
+      if (target) {
+        for (const s of target.sets) {
+          if (setIds.includes(s.id)) {
+            await updateSetLocal({ ...s, memo: memo || null });
+          }
+        }
+      }
       setMenu((prev) => {
         if (!prev) return prev;
         return {
@@ -247,8 +254,12 @@ export default function MainPage() {
           ),
         };
       });
+      runSync().catch(() => {});
+    } catch (e) {
+      console.error("メモの保存に失敗しました", e);
+    } finally {
+      setSavingMemo(null);
     }
-    setSavingMemo(null);
   }
 
   function addCompleted(exerciseId: string) {
@@ -266,18 +277,22 @@ export default function MainPage() {
   }
 
   function startComplete(exercise: ExerciseWithSets) {
+    const sortedSets = [...exercise.sets].sort((a, b) => a.set_number - b.set_number);
     setActualsModal({
       exerciseId: exercise.id,
       exerciseName: exercise.name,
       isAssisted: exercise.is_assisted,
       weightStep: exercise.weight_step ?? 2.5,
-      rows: exercise.sets.map((s) => ({
+      rows: sortedSets.map((s, i) => ({
         set_id: s.id,
         set_number: s.set_number,
         planned_weight: s.weight,
         planned_reps: s.reps,
         actual_weight: s.weight,
         actual_reps: s.reps,
+        // 最終セット（=トップ）は ratio を強制的に null にして UI で TOP として扱う
+        backoff_ratio:
+          i === sortedSets.length - 1 ? null : s.backoff_ratio ?? null,
       })),
     });
     setRevealedId(null);
@@ -296,104 +311,103 @@ export default function MainPage() {
     setSavingActuals(true);
     setSaveError(null);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setSaveError("ログインが切れています。再ログインしてください。");
+      const userId = await getCurrentUserId();
+      if (!userId) {
+        setSaveError("ログイン情報がありません。一度オンラインでログインしてください。");
         return;
       }
 
-      const payload = actualsModal.rows.map((r) => ({
-        set_id: r.set_id,
-        exercise_id: actualsModal.exerciseId,
-        user_id: user.id,
-        set_number: r.set_number,
-        planned_weight: r.planned_weight,
-        planned_reps: r.planned_reps,
-        actual_weight: r.actual_weight,
-        actual_reps: r.actual_reps,
-        is_assisted: actualsModal.isAssisted,
-        rir: null,
-      }));
-
-      const { error } = await supabase.from("set_logs").insert(payload);
-      if (error) {
+      const performedAt = nowIso();
+      try {
+        for (const r of actualsModal.rows) {
+          await putSetLog({
+            id: newId(),
+            set_id: r.set_id,
+            exercise_id: actualsModal.exerciseId,
+            user_id: userId,
+            performed_at: performedAt,
+            set_number: r.set_number,
+            planned_weight: r.planned_weight,
+            planned_reps: r.planned_reps,
+            actual_weight: r.actual_weight,
+            actual_reps: r.actual_reps,
+            is_assisted: actualsModal.isAssisted,
+            rir: null,
+          });
+        }
+      } catch (e) {
         setSaveError(
-          `保存に失敗しました: ${error.message}\nSupabaseで schema.sql を再実行してください。`
+          `保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`
         );
         return;
       }
+      runSync().catch(() => {});
 
       addCompleted(actualsModal.exerciseId);
 
-      // 進歩判定（トップセット式：最終セットで限界、それ以外は予定通り想定）
+      // 進歩判定（トップセット法：トップ＝最終セットのレップ数のみで判定）
       const isAssisted = actualsModal.isAssisted;
       const rows = actualsModal.rows;
       const lastIdx = rows.length - 1;
-      const last = rows[lastIdx];
-      const firstSets = rows.slice(0, lastIdx);
+      const top = rows[lastIdx];
 
-      const lastDelta = last.actual_reps - last.planned_reps;
-      const firstDeltas = firstSets.map((r) => r.actual_reps - r.planned_reps);
-      const firstMinDelta =
-        firstDeltas.length > 0 ? Math.min(...firstDeltas) : 0;
-      const firstSetsHit = firstDeltas.every((d) => d >= 0);
-      const weightWeak = rows.some((r) =>
-        isAssisted
-          ? r.actual_weight > r.planned_weight
-          : r.actual_weight < r.planned_weight
-      );
+      const topDelta = top.actual_reps - top.planned_reps;
 
       let delta = 0;
       let reason = "";
 
-      if (!firstSetsHit && firstMinDelta <= -3) {
-        // 前半セット（予定通りこなすはず）が大きく崩れた = 重量が重すぎる
+      if (topDelta <= -3) {
         delta = -1;
-        reason = `予定セットで${-firstMinDelta}回不足。重量を下げて立て直しましょう`;
-      } else if (!firstSetsHit) {
+        reason = `トップが${-topDelta}回不足。重量を下げて再挑戦しましょう`;
+      } else if (topDelta < 0) {
         delta = 0;
-        reason = `予定セットで${-firstMinDelta}回不足。据え置きで再挑戦しましょう`;
-      } else if (weightWeak) {
+        reason = `トップが${-topDelta}回不足。据え置きで再挑戦しましょう`;
+      } else if (topDelta === 0) {
         delta = 0;
-        reason =
-          "レップは達成したが重量が予定より弱め。次回は予定の重量で挑戦しましょう";
-      } else if (lastDelta <= -3) {
-        delta = -1;
-        reason = `最終セットが${-lastDelta}回不足。重量を下げて再挑戦しましょう`;
-      } else if (lastDelta < 0) {
-        delta = 0;
-        reason = `最終セットが${-lastDelta}回不足。据え置きで再挑戦しましょう`;
-      } else if (lastDelta === 0) {
-        delta = 0;
-        reason =
-          "最終セット予定通り（限界に到達）。今週は同重量で安定させましょう";
-      } else if (lastDelta <= 2) {
+        reason = "トップ予定通り（限界に到達）。今週は同重量で安定させましょう";
+      } else if (topDelta <= 2) {
         delta = 1;
-        reason = `最終セット +${lastDelta}回。順調なので少しアップしましょう`;
-      } else if (lastDelta <= 4) {
+        reason = `トップ +${topDelta}回。順調なので少しアップしましょう`;
+      } else if (topDelta <= 4) {
         delta = 2;
-        reason = `最終セット +${lastDelta}回でまだ余裕あり。大幅にアップできます`;
-      } else if (lastDelta <= 6) {
+        reason = `トップ +${topDelta}回でまだ余裕あり。大幅にアップできます`;
+      } else if (topDelta <= 6) {
         delta = 3;
-        reason = `最終セット +${lastDelta}回。重量がかなり軽い、しっかり上げましょう`;
+        reason = `トップ +${topDelta}回。重量がかなり軽い、しっかり上げましょう`;
       } else {
         delta = 4;
-        reason = `最終セット +${lastDelta}回。明らかに重量が軽すぎる、大幅にアップしましょう`;
+        reason = `トップ +${topDelta}回。明らかに重量が軽すぎる、大幅にアップしましょう`;
       }
 
       const direction = isAssisted ? -1 : 1;
       const step = actualsModal.weightStep;
+      // 新トップ重量。delta=0 でも何も変えない方針は既存と同じ。
+      const newTopWeight = Math.max(
+        0,
+        roundToStep(top.actual_weight + delta * step * direction, step)
+      );
+
       const updates =
         delta === 0
           ? []
-          : actualsModal.rows.map((r) => ({
-              setId: r.set_id,
-              oldWeight: r.planned_weight,
-              newWeight: Math.max(
-                0,
-                roundToStep(r.actual_weight + delta * step * direction, step)
-              ),
-            }));
+          : rows.map((r, i) => {
+              const isTop = i === lastIdx;
+              const ratio = r.backoff_ratio;
+              // バックオフ（比率あり）はトップから自動再計算。トップ＆独立セットは個別に delta を適用。
+              const newWeight = isTop
+                ? newTopWeight
+                : ratio !== null && ratio !== undefined
+                ? Math.max(0, roundToStep(newTopWeight * ratio, step))
+                : Math.max(
+                    0,
+                    roundToStep(r.actual_weight + delta * step * direction, step)
+                  );
+              return {
+                setId: r.set_id,
+                oldWeight: r.planned_weight,
+                newWeight,
+              };
+            });
 
       setProgression({
         exerciseName: actualsModal.exerciseName,
@@ -412,30 +426,37 @@ export default function MainPage() {
 
   async function applyProgression() {
     if (!progression) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const userId = await getCurrentUserId();
+    if (!userId) return;
+
+    // 現在の set 一覧を局所参照（weight 以外を保持して update する必要があるため）
+    const setById = new Map<string, WorkoutSet>();
+    if (menu) {
+      for (const ex of menu.exercises) for (const s of ex.sets) setById.set(s.id, s);
+    }
 
     for (const u of progression.updates) {
-      // 計画値を更新
-      const { error: setError } = await supabase
-        .from("sets")
-        .update({ weight: u.newWeight })
-        .eq("id", u.setId);
-      if (setError) {
-        console.error("計画値の更新に失敗しました", setError);
-        continue;
-      }
-      // 重量更新履歴に記録
-      const { error: histError } = await supabase.from("weight_updates").insert({
-        set_id: u.setId,
-        user_id: user.id,
-        old_weight: u.oldWeight,
-        new_weight: u.newWeight,
-      });
-      if (histError) {
-        console.error("重量更新履歴の保存に失敗しました", histError);
+      const orig = setById.get(u.setId);
+      if (!orig) continue;
+      try {
+        await updateSetLocal({
+          ...orig,
+          weight: u.newWeight,
+          backoff_ratio: orig.backoff_ratio ?? null,
+        });
+        await putWeightUpdate({
+          id: newId(),
+          set_id: u.setId,
+          user_id: userId,
+          old_weight: u.oldWeight,
+          new_weight: u.newWeight,
+          updated_at: nowIso(),
+        });
+      } catch (e) {
+        console.error("重量の更新に失敗しました", e);
       }
     }
+    runSync().catch(() => {});
     setProgression(null);
     await fetchTodayMenu();
   }
@@ -581,20 +602,37 @@ export default function MainPage() {
                               )}
                             </div>
 
-                            {/* セットリスト */}
-                            {ex.sets.map((s: WorkoutSet) => (
-                              <div key={s.id} className="flex items-center gap-2 mb-1.5 pl-4">
-                                <div className="flex items-center justify-center w-5 h-5 bg-gray-200 rounded text-xs">
-                                  {s.set_number}
+                            {/* セットリスト（末尾=トップ、その他=バックオフ） */}
+                            {ex.sets.map((s: WorkoutSet, sIdx) => {
+                              const isTop = sIdx === ex.sets.length - 1;
+                              const ratio = s.backoff_ratio;
+                              return (
+                                <div key={s.id} className="flex items-center gap-2 mb-1.5 pl-4">
+                                  <div
+                                    className={`flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${
+                                      isTop
+                                        ? "bg-gray-800 text-white"
+                                        : "bg-gray-200"
+                                    }`}
+                                  >
+                                    {s.set_number}
+                                  </div>
+                                  <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
+                                    {formatWeight(s.weight, ex.is_assisted)}
+                                    {isTop ? (
+                                      <span className="ml-1 text-[9px] text-gray-700 font-bold">TOP</span>
+                                    ) : ratio !== null && ratio !== undefined ? (
+                                      <span className="ml-1 text-[9px] text-gray-500">
+                                        ({Math.round(ratio * 100)}%)
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
+                                    {s.reps}回
+                                  </div>
                                 </div>
-                                <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
-                                  {formatWeight(s.weight, ex.is_assisted)}
-                                </div>
-                                <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
-                                  {s.reps}回
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
 
                             {/* メモ（編集可能） */}
                             <div className="mt-2 pl-4">
@@ -673,15 +711,28 @@ export default function MainPage() {
               予定通りなら何もしないで「記録して完了」を押してください
             </p>
 
-            {actualsModal.rows.map((row, idx) => (
+            {actualsModal.rows.map((row, idx) => {
+              const isTop = idx === actualsModal.rows.length - 1;
+              return (
               <div key={row.set_id} className="mb-3 p-2 bg-gray-50 rounded-xl">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <div className="flex items-center justify-center w-5 h-5 bg-gray-300 rounded text-[10px] font-bold">
+                  <div
+                    className={`flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${
+                      isTop ? "bg-gray-800 text-white" : "bg-gray-300"
+                    }`}
+                  >
                     {row.set_number}
                   </div>
                   <span className="text-[10px] text-gray-500">
                     予定 {formatWeight(row.planned_weight, actualsModal.isAssisted)} × {row.planned_reps}回
                   </span>
+                  {isTop ? (
+                    <span className="text-[9px] font-bold text-gray-800 ml-auto">TOP（限界まで）</span>
+                  ) : row.backoff_ratio !== null && row.backoff_ratio !== undefined ? (
+                    <span className="text-[9px] text-gray-500 ml-auto">
+                      バックオフ {Math.round(row.backoff_ratio * 100)}%
+                    </span>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-1.5 pl-7">
                   {/* 実重量 */}
@@ -735,7 +786,8 @@ export default function MainPage() {
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
 
             {saveError && (
               <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded-lg text-[10px] text-red-700 whitespace-pre-wrap">
