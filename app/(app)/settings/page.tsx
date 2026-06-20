@@ -99,8 +99,6 @@ export default function SettingsPage() {
   const [menuData, setMenuData] = useState<MenuData>(defaultMenu(0));
   const [picker, setPicker] = useState<PickerTarget>(null);
   const [saving, setSaving] = useState(false);
-  // メニュー切替方向。新インデックスが大きい時は左へ流れる（右から入ってくる）
-  const [slideDir, setSlideDir] = useState<"left" | "right">("right");
   const [message, setMessage] = useState("");
   const [showDaySelector, setShowDaySelector] = useState(false);
   const [intervalInput, setIntervalInput] = useState("");
@@ -219,7 +217,6 @@ export default function SettingsPage() {
 
   function switchMenu(newIdx: number) {
     if (newIdx < 0 || newIdx >= visibleCount || newIdx === currentIdx) return;
-    setSlideDir(newIdx > currentIdx ? "left" : "right");
     setCurrentIdx(newIdx);
     if (newIdx < savedMenus.length) {
       loadMenu(savedMenus[newIdx]);
@@ -540,10 +537,7 @@ export default function SettingsPage() {
 
   return (
     <div className="pb-2">
-      <div
-        key={currentIdx}
-        className={slideDir === "left" ? "slide-in-right" : "slide-in-left"}
-      >
+      <div key={currentIdx} className="menu-fade-in">
       {/* ヘッダー */}
       <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2">
         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -841,8 +835,13 @@ export default function SettingsPage() {
 
       </div>
 
-      {/* 保存バー（常時下部に固定）：左=削除 / 中央=メニュー切替 / 右=保存 */}
-      <div className="sticky bottom-0 z-30 bg-white border-t border-gray-200 px-3 py-2 flex items-center gap-2">
+      {/* 保存バー（常時下部に固定）：左=削除 / 中央=メニュー切替 / 右=保存
+          translateZ(0) は iOS Safari の sticky 描画バグ回避（GPU レイヤーに切り出して
+          スクロール中に表示が落ちないようにする）。 */}
+      <div
+        className="sticky bottom-0 z-30 bg-white border-t border-gray-200 px-3 py-2 flex items-center gap-2"
+        style={{ transform: "translateZ(0)", WebkitTransform: "translateZ(0)" }}
+      >
         <div className="flex-1 flex items-center min-w-0">
           {menuData.id && (
             <button
@@ -853,25 +852,23 @@ export default function SettingsPage() {
             </button>
           )}
         </div>
-        {visibleCount > 1 && (
-          <div className="flex items-center justify-center gap-1 flex-wrap max-w-[50%]">
-            {[...Array(visibleCount)].map((_, i) => (
-              <button
-                key={i}
-                onClick={() => switchMenu(i)}
-                className={`flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold transition-colors flex-shrink-0 ${
-                  currentIdx === i
-                    ? "bg-gray-800 text-white"
-                    : i < savedMenus.length
-                    ? "bg-gray-200 text-gray-700"
-                    : "bg-white border border-dashed border-gray-400 text-gray-500"
-                }`}
-              >
-                {i + 1}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="flex items-center justify-center gap-1 flex-wrap max-w-[55%]">
+          {[...Array(visibleCount)].map((_, i) => (
+            <button
+              key={i}
+              onClick={() => switchMenu(i)}
+              className={`flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold transition-colors flex-shrink-0 ${
+                currentIdx === i
+                  ? "bg-gray-800 text-white"
+                  : i < savedMenus.length
+                  ? "bg-gray-200 text-gray-700"
+                  : "bg-white border border-dashed border-gray-400 text-gray-500"
+              }`}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
         <div className="flex-1 flex items-center justify-end gap-2">
           {message && <span className="text-[10px] text-green-600 whitespace-nowrap">{message}</span>}
           <button

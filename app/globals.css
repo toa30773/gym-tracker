@@ -31,18 +31,14 @@ body {
   scroll-snap-align: center;
 }
 
-/* 設定画面のメニュー切替時のスライドアニメーション */
-@keyframes slideInFromRight {
-  from { transform: translateX(24px); opacity: 0; }
-  to   { transform: translateX(0);    opacity: 1; }
+/* 設定画面のメニュー切替時の表示アニメーション。
+   以前は translateX を使っていたが、同じスクロールコンテナ内に transform を持つ要素があると
+   iOS Safari の position: sticky が無効化されるバグがあり、保存バーが初回表示されない事故が起きた。
+   transform を使わず opacity のみのフェードに切り替え。方向は気にしない（タップが直感的なため）。 */
+@keyframes settingsFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
-@keyframes slideInFromLeft {
-  from { transform: translateX(-24px); opacity: 0; }
-  to   { transform: translateX(0);     opacity: 1; }
-}
-.slide-in-right {
-  animation: slideInFromRight 220ms ease-out;
-}
-.slide-in-left {
-  animation: slideInFromLeft 220ms ease-out;
+.menu-fade-in {
+  animation: settingsFadeIn 180ms ease-out;
 }
