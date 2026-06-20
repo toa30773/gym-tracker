@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Menu, MenuWithExercises, WorkoutSet } from "@/lib/types";
+import type { Menu, MenuWithExercises, ExerciseWithSets, WorkoutSet } from "@/lib/types";
 
 const DAY_MAP: Record<number, string> = {
   0: "日",
@@ -13,6 +13,8 @@ const DAY_MAP: Record<number, string> = {
   5: "金",
   6: "土",
 };
+
+const COMPLETED_KEY_PREFIX = "completed-exercises-";
 
 interface WeightModal {
   setId: string;
@@ -37,6 +39,11 @@ function isMenuActiveToday(menu: Menu): boolean {
   return false;
 }
 
+function todayKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export default function MainPage() {
   const supabase = createClient();
   const [menu, setMenu] = useState<MenuWithExercises | null>(null);
@@ -46,6 +53,24 @@ export default function MainPage() {
   const [noMenuToday, setNoMenuToday] = useState(false);
   const [memoEdits, setMemoEdits] = useState<Record<string, string>>({});
   const [savingMemo, setSavingMemo] = useState<string | null>(null);
+  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
+  const [revealedId, setRevealedId] = useState<string | null>(null);
+  const swipeStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
+
+  // 完了状態をlocalStorageから復元（過去日のキーは削除）
+  useEffect(() => {
+    const key = COMPLETED_KEY_PREFIX + todayKey();
+    try {
+      const stored = localStorage.getItem(key);
+      if (stored) setCompletedIds(new Set(JSON.parse(stored)));
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(COMPLETED_KEY_PREFIX) && k !== key) {
+          localStorage.removeItem(k);
+        }
+      }
+    } catch {}
+  }, []);
 
   const fetchTodayMenu = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -130,7 +155,6 @@ export default function MainPage() {
     if (error) {
       console.error("メモの保存に失敗しました", error);
     } else {
-      // ローカルstateも更新（再フェッチを避けて軽量化）
       setMenu((prev) => {
         if (!prev) return prev;
         return {
@@ -177,6 +201,67 @@ export default function MainPage() {
     await fetchTodayMenu();
   }
 
+  function markCompleted(exerciseId: string) {
+    setCompletedIds((prev) => {
+      const next = new Set(prev);
+      next.add(exerciseId);
+      try {
+        localStorage.setItem(
+          COMPLETED_KEY_PREFIX + todayKey(),
+          JSON.stringify([...next])
+        );
+      } catch {}
+      return next;
+    });
+    setRevealedId(null);
+  }
+
+  function handleSwipeStart(e: React.TouchEvent, exId: string) {
+    swipeStartRef.current = {
+      id: exId,
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY,
+    };
+  }
+
+  function handleSwipeEnd(e: React.TouchEvent, exId: string) {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!start || start.id !== exId) return;
+    const dx = e.changedTouches[0].clientX - start.x;
+    const dy = e.changedTouches[0].clientY - start.y;
+    if (Math.abs(dy) > Math.abs(dx)) return;
+    if (dx < -50) {
+      setRevealedId(exId);
+    } else if (dx > 50) {
+      setRevealedId((cur) => (cur === exId ? null : cur));
+    }
+  }
+
+  // 完了していない種目を部位ごとにグルーピング
+  const visibleGroups = useMemo(() => {
+    if (!menu) return [];
+    const groups: { body_part: string; exercises: ExerciseWithSets[] }[] = [];
+    for (const ex of menu.exercises) {
+      if (completedIds.has(ex.id)) continue;
+      const last = groups[groups.length - 1];
+      if (last && last.body_part === ex.body_part) {
+        last.exercises.push(ex);
+      } else {
+        groups.push({ body_part: ex.body_part, exercises: [ex] });
+      }
+    }
+    return groups;
+  }, [menu, completedIds]);
+
+  const isComplete =
+    menu !== null && menu.exercises.length > 0 && visibleGroups.length === 0;
+
+  const totalVisibleExercises = visibleGroups.reduce(
+    (sum, g) => sum + g.exercises.length,
+    0
+  );
+
   if (loading) {
     return <div className="flex items-center justify-center h-40 text-sm text-gray-500">読み込み中...</div>;
   }
@@ -206,117 +291,161 @@ export default function MainPage() {
       </div>
       <div className="h-px bg-black mx-4 mb-3" />
 
-      {/* 種目リスト */}
-      {menu.exercises.map((ex, exIdx) => {
-        const currentMemo = ex.sets[0]?.memo || "";
-        const editedMemo = memoEdits[ex.id] ?? currentMemo;
-        const isDirty = editedMemo !== currentMemo;
-        const isSaving = savingMemo === ex.id;
-        const machineHeight = ex.sets.find((s) => s.machine_height)?.machine_height || "";
-        const prevBodyPart = exIdx > 0 ? menu.exercises[exIdx - 1].body_part : null;
-        const isGroupHead = prevBodyPart !== ex.body_part;
-        return (
-          <div key={ex.id}>
-            <div className="px-4 py-2">
-              {/* 部位（グループ先頭のみ） + 更新回数 */}
-              <div className="flex items-center justify-between mb-1">
-                {isGroupHead ? (
-                  <div className="inline-flex px-3 py-1 border border-gray-400 rounded-full text-xs">
-                    【{ex.body_part}】
-                  </div>
-                ) : (
-                  <span />
-                )}
-                <span className="text-xs text-gray-500">
-                  重量更新回数{updateCounts[ex.id] || 0}回
-                </span>
+      {isComplete ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-3">
+          <span className="text-4xl font-extrabold tracking-widest text-gray-800">
+            コンプリート
+          </span>
+          <p className="text-xs text-gray-500">本日のメニューをすべて完了しました</p>
+        </div>
+      ) : (
+        <>
+          {visibleGroups.map((group, gIdx) => {
+            return (
+              <div key={`${group.body_part}-${gIdx}`}>
+                {group.exercises.map((ex, exIdxInGroup) => {
+                  const currentMemo = ex.sets[0]?.memo || "";
+                  const editedMemo = memoEdits[ex.id] ?? currentMemo;
+                  const isDirty = editedMemo !== currentMemo;
+                  const isSaving = savingMemo === ex.id;
+                  const machineHeight =
+                    ex.sets.find((s) => s.machine_height)?.machine_height || "";
+                  const isGroupHead = exIdxInGroup === 0;
+                  const isRevealed = revealedId === ex.id;
+                  const isLast =
+                    gIdx === visibleGroups.length - 1 &&
+                    exIdxInGroup === group.exercises.length - 1;
+                  return (
+                    <div key={ex.id}>
+                      <div className="relative overflow-hidden">
+                        {/* 完了ボタン（背面） */}
+                        <button
+                          onClick={() => markCompleted(ex.id)}
+                          className="absolute right-0 top-0 bottom-0 w-20 flex items-center justify-center bg-emerald-500 text-white text-sm font-bold"
+                        >
+                          完了
+                        </button>
+
+                        {/* スワイプ可能な前面 */}
+                        <div
+                          className="bg-white relative transition-transform duration-200 ease-out"
+                          style={{
+                            transform: isRevealed ? "translateX(-80px)" : "translateX(0)",
+                          }}
+                          onTouchStart={(e) => handleSwipeStart(e, ex.id)}
+                          onTouchEnd={(e) => handleSwipeEnd(e, ex.id)}
+                        >
+                          <div className="px-4 py-2">
+                            {/* 部位（グループ先頭のみ） + 更新回数 */}
+                            <div className="flex items-center justify-between mb-1">
+                              {isGroupHead ? (
+                                <div className="inline-flex px-3 py-1 border border-gray-400 rounded-full text-xs">
+                                  【{ex.body_part}】
+                                </div>
+                              ) : (
+                                <span />
+                              )}
+                              <span className="text-xs text-gray-500">
+                                重量更新回数{updateCounts[ex.id] || 0}回
+                              </span>
+                            </div>
+
+                            {/* 種目名 + 椅子の高さ */}
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-sm">●</span>
+                              <div className="bg-gray-200 rounded-full px-3 py-1 text-xs flex-1">
+                                {ex.name}
+                              </div>
+                              {machineHeight && (
+                                <div className="bg-gray-200 rounded-full px-3 py-1 text-xs whitespace-nowrap">
+                                  椅子: {machineHeight}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* セットリスト */}
+                            {ex.sets.map((s: WorkoutSet) => (
+                              <div key={s.id} className="flex items-center gap-2 mb-1.5 pl-4">
+                                <div className="flex items-center justify-center w-5 h-5 bg-gray-200 rounded text-xs">
+                                  {s.set_number}
+                                </div>
+                                <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
+                                  {s.weight}kg
+                                </div>
+                                <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
+                                  {s.reps}回
+                                </div>
+                                <button
+                                  onClick={() => openWeightModal(s, ex.name)}
+                                  className="px-2 py-1 bg-gray-300 rounded-full text-xs font-bold whitespace-nowrap"
+                                >
+                                  重量更新
+                                </button>
+                              </div>
+                            ))}
+
+                            {/* メモ（編集可能） */}
+                            <div className="mt-2 pl-4">
+                              <textarea
+                                value={editedMemo}
+                                onChange={(e) =>
+                                  setMemoEdits((prev) => ({ ...prev, [ex.id]: e.target.value }))
+                                }
+                                placeholder="メモを入力"
+                                rows={2}
+                                className="w-full bg-gray-200 rounded-xl px-3 py-2 text-xs resize-none outline-none placeholder-gray-500"
+                              />
+                              {isDirty && (
+                                <div className="flex justify-end mt-1 gap-2">
+                                  <button
+                                    onClick={() =>
+                                      setMemoEdits((prev) => {
+                                        const next = { ...prev };
+                                        delete next[ex.id];
+                                        return next;
+                                      })
+                                    }
+                                    className="text-[10px] text-gray-500 underline"
+                                  >
+                                    キャンセル
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      const setIds = ex.sets.map((s) => s.id);
+                                      await saveMemo(ex.id, setIds, editedMemo);
+                                      setMemoEdits((prev) => {
+                                        const next = { ...prev };
+                                        delete next[ex.id];
+                                        return next;
+                                      });
+                                    }}
+                                    disabled={isSaving}
+                                    className="text-[10px] bg-gray-800 text-white px-2 py-0.5 rounded-full font-bold disabled:opacity-50"
+                                  >
+                                    {isSaving ? "保存中..." : "メモを保存"}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {!isLast && <div className="h-px bg-black mx-4 my-1" />}
+                    </div>
+                  );
+                })}
               </div>
+            );
+          })}
 
-              {/* 種目名 + 椅子の高さ */}
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-sm">●</span>
-                <div className="bg-gray-200 rounded-full px-3 py-1 text-xs flex-1">
-                  {ex.name}
-                </div>
-                {machineHeight && (
-                  <div className="bg-gray-200 rounded-full px-3 py-1 text-xs whitespace-nowrap">
-                    椅子: {machineHeight}
-                  </div>
-                )}
-              </div>
-
-              {/* セットリスト */}
-              {ex.sets.map((s: WorkoutSet) => (
-                <div key={s.id} className="flex items-center gap-2 mb-1.5 pl-4">
-                  <div className="flex items-center justify-center w-5 h-5 bg-gray-200 rounded text-xs">
-                    {s.set_number}
-                  </div>
-                  <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
-                    {s.weight}kg
-                  </div>
-                  <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
-                    {s.reps}回
-                  </div>
-                  <button
-                    onClick={() => openWeightModal(s, ex.name)}
-                    className="px-2 py-1 bg-gray-300 rounded-full text-xs font-bold whitespace-nowrap"
-                  >
-                    重量更新
-                  </button>
-                </div>
-              ))}
-
-              {/* メモ（編集可能） */}
-              <div className="mt-2 pl-4">
-                <textarea
-                  value={editedMemo}
-                  onChange={(e) =>
-                    setMemoEdits((prev) => ({ ...prev, [ex.id]: e.target.value }))
-                  }
-                  placeholder="メモを入力"
-                  rows={2}
-                  className="w-full bg-gray-200 rounded-xl px-3 py-2 text-xs resize-none outline-none placeholder-gray-500"
-                />
-                {isDirty && (
-                  <div className="flex justify-end mt-1 gap-2">
-                    <button
-                      onClick={() =>
-                        setMemoEdits((prev) => {
-                          const next = { ...prev };
-                          delete next[ex.id];
-                          return next;
-                        })
-                      }
-                      className="text-[10px] text-gray-500 underline"
-                    >
-                      キャンセル
-                    </button>
-                    <button
-                      onClick={async () => {
-                        const setIds = ex.sets.map((s) => s.id);
-                        await saveMemo(ex.id, setIds, editedMemo);
-                        setMemoEdits((prev) => {
-                          const next = { ...prev };
-                          delete next[ex.id];
-                          return next;
-                        });
-                      }}
-                      disabled={isSaving}
-                      className="text-[10px] bg-gray-800 text-white px-2 py-0.5 rounded-full font-bold disabled:opacity-50"
-                    >
-                      {isSaving ? "保存中..." : "メモを保存"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {exIdx < menu.exercises.length - 1 && (
-              <div className="h-px bg-black mx-4 my-1" />
-            )}
-          </div>
-        );
-      })}
+          {totalVisibleExercises > 0 && (
+            <p className="text-center text-[10px] text-gray-400 mt-3">
+              ← 種目を左にスワイプで「完了」
+            </p>
+          )}
+        </>
+      )}
 
       {/* 重量更新モーダル */}
       {modal && (

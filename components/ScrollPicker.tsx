@@ -16,7 +16,7 @@ export default function ScrollPicker({
   itemHeight = 36,
 }: ScrollPickerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const isScrolling = useRef(false);
+  const snapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const visibleCount = 5;
   const containerHeight = itemHeight * visibleCount;
@@ -32,18 +32,16 @@ export default function ScrollPicker({
   }, [value, items, itemHeight]);
 
   function handleScroll() {
-    if (isScrolling.current) return;
     const container = containerRef.current;
     if (!container) return;
 
-    clearTimeout((handleScroll as { timeout?: ReturnType<typeof setTimeout> }).timeout);
-    (handleScroll as { timeout?: ReturnType<typeof setTimeout> }).timeout = setTimeout(() => {
+    if (snapTimeoutRef.current) clearTimeout(snapTimeoutRef.current);
+    snapTimeoutRef.current = setTimeout(() => {
       const idx = Math.round(container.scrollTop / itemHeight);
       const clamped = Math.max(0, Math.min(idx, items.length - 1));
       if (items[clamped] !== value) {
         onChange(items[clamped]);
       }
-      isScrolling.current = false;
     }, 100);
   }
 
