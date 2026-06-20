@@ -8,6 +8,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <main className="flex-1 overflow-y-auto">
         {children}
       </main>
+      {/* ページ固有のアクションバーをここへ Portal で差し込む。
+          スクロールコンテナの外なので iOS Safari の sticky バグの影響を受けない。 */}
+      <div id="app-action-bar-slot" className="flex-shrink-0" />
       <div className="flex-shrink-0">
         <BottomNav />
       </div>

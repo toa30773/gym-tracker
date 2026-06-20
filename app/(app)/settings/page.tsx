@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   getMenusWithExercisesForUser,
   putMenu,
@@ -106,6 +107,11 @@ export default function SettingsPage() {
   // 「コピー」を押した直後に視覚フィードバックを出すための一時記憶（exercise.id の集合）
   const [recentlyCopiedIds, setRecentlyCopiedIds] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // 保存バーを差し込む先（AppLayout の slot）。マウント後にだけ見つかる。
+  const [actionBarSlot, setActionBarSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setActionBarSlot(document.getElementById("app-action-bar-slot"));
+  }, []);
   const [deleting, setDeleting] = useState(false);
 
   const fetchMenus = useCallback(async () => {
@@ -835,51 +841,55 @@ export default function SettingsPage() {
 
       </div>
 
-      {/* 保存バー（常時下部に固定）：左=削除 / 中央=メニュー切替 / 右=保存
-          translateZ(0) は iOS Safari の sticky 描画バグ回避（GPU レイヤーに切り出して
-          スクロール中に表示が落ちないようにする）。 */}
-      <div
-        className="sticky bottom-0 z-30 bg-white border-t border-gray-200 px-3 py-2 flex items-center gap-2"
-        style={{ transform: "translateZ(0)", WebkitTransform: "translateZ(0)" }}
-      >
-        <div className="flex-1 flex items-center min-w-0">
-          {menuData.id && (
-            <button
-              onClick={() => setConfirmDelete(true)}
-              className="text-[10px] text-red-500 underline whitespace-nowrap"
-            >
-              このメニューを削除
-            </button>
-          )}
-        </div>
-        <div className="flex items-center justify-center gap-1 flex-wrap max-w-[55%]">
-          {[...Array(visibleCount)].map((_, i) => (
-            <button
-              key={i}
-              onClick={() => switchMenu(i)}
-              className={`flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold transition-colors flex-shrink-0 ${
-                currentIdx === i
-                  ? "bg-gray-800 text-white"
-                  : i < savedMenus.length
-                  ? "bg-gray-200 text-gray-700"
-                  : "bg-white border border-dashed border-gray-400 text-gray-500"
-              }`}
-            >
-              {i + 1}
-            </button>
-          ))}
-        </div>
-        <div className="flex-1 flex items-center justify-end gap-2">
-          {message && <span className="text-[10px] text-green-600 whitespace-nowrap">{message}</span>}
-          <button
-            onClick={save}
-            disabled={saving}
-            className="px-4 py-1.5 bg-gray-800 text-white rounded-full text-xs font-bold disabled:opacity-50 whitespace-nowrap"
-          >
-            {saving ? "保存中..." : "保存"}
-          </button>
-        </div>
-      </div>
+      {/* 保存バーは AppLayout のスロットへ Portal 経由で挿入する。
+          main の外側に置くので、スクロール状態に関係なく BottomNav の真上に出る。 */}
+      {actionBarSlot &&
+        createPortal(
+          <div className="mx-auto max-w-[430px] bg-white border-t border-gray-200 px-3 py-2 flex items-center gap-2">
+            <div className="flex-1 flex items-center min-w-0">
+              {menuData.id && (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="text-[10px] text-red-500 underline whitespace-nowrap"
+                >
+                  このメニューを削除
+                </button>
+              )}
+            </div>
+            <div className="flex items-center justify-center gap-1 flex-wrap max-w-[55%]">
+              {[...Array(visibleCount)].map((_, i) => (
+                <button
+                  key={i}
+                  onClick={() => switchMenu(i)}
+                  className={`flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold transition-colors flex-shrink-0 ${
+                    currentIdx === i
+                      ? "bg-gray-800 text-white"
+                      : i < savedMenus.length
+                      ? "bg-gray-200 text-gray-700"
+                      : "bg-white border border-dashed border-gray-400 text-gray-500"
+                  }`}
+                >
+                  {i + 1}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 flex items-center justify-end gap-2">
+              {message && (
+                <span className="text-[10px] text-green-600 whitespace-nowrap">
+                  {message}
+                </span>
+              )}
+              <button
+                onClick={save}
+                disabled={saving}
+                className="px-4 py-1.5 bg-gray-800 text-white rounded-full text-xs font-bold disabled:opacity-50 whitespace-nowrap"
+              >
+                {saving ? "保存中..." : "保存"}
+              </button>
+            </div>
+          </div>,
+          actionBarSlot,
+        )}
 
       {/* スクロールピッカーモーダル */}
       {picker && (
