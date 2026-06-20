@@ -59,6 +59,18 @@ async function refreshPending() {
 // Push: mutations queue を Supabase に流す
 // ──────────────────────────────────────────
 
+// 親テーブルから子テーブルへの順序。同じ ms に enqueue された mutation が
+// IndexedDB の by_created インデックスで同位になり、UUID 順で並ぶと
+// sets が exercises より先に push されて FK 違反になることがある。
+// このマップで同 created_at 内の処理順を決めて防ぐ。
+const TABLE_PRIORITY: Record<Mutation["table"], number> = {
+  menus: 0,
+  exercises: 1,
+  sets: 2,
+  weight_updates: 3,
+  set_logs: 4,
+};
+
 async function applyMutation(mutation: Mutation): Promise<{ error: string | null }> {
   const supabase = createClient();
   const { table, operation, record_id, payload } = mutation;
@@ -85,6 +97,13 @@ async function applyMutation(mutation: Mutation): Promise<{ error: string | null
 async function pushMutations(): Promise<{ ok: boolean; error?: string }> {
   const mutations = await getPendingMutations();
   if (mutations.length === 0) return { ok: true };
+
+  mutations.sort((a, b) => {
+    if (a.created_at !== b.created_at) {
+      return a.created_at < b.created_at ? -1 : 1;
+    }
+    return TABLE_PRIORITY[a.table] - TABLE_PRIORITY[b.table];
+  });
 
   for (const m of mutations) {
     const { error } = await applyMutation(m);
