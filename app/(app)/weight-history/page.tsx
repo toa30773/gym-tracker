@@ -220,9 +220,6 @@ export default function WeightHistoryPage() {
     return (
       <div className="flex flex-col items-center justify-center h-40 gap-2">
         <p className="text-sm text-gray-500">まだ実績がありません</p>
-        <a href="/main" className="text-xs text-blue-500 underline">
-          メイン画面へ
-        </a>
       </div>
     );
   }

@@ -614,9 +614,8 @@ export default function MainPage() {
             <p className="text-xs text-gray-400">設定画面で曜日を確認してください</p>
           </>
         ) : (
-          <p className="text-sm text-gray-500">メニューがまだ設定されていません</p>
+          <p className="text-sm text-gray-500">休み</p>
         )}
-        <a href="/settings" className="text-xs text-blue-500 underline mt-2">設定画面へ</a>
       </div>
     );
   }
