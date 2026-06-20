@@ -44,10 +44,6 @@ function update(patch: Partial<SyncState>) {
   emit();
 }
 
-export function getSyncState(): SyncState {
-  return state;
-}
-
 export function subscribeSync(listener: Listener): () => void {
   listeners.add(listener);
   listener(state);
@@ -86,7 +82,7 @@ async function applyMutation(mutation: Mutation): Promise<{ error: string | null
   return { error: `unknown operation: ${operation}` };
 }
 
-export async function pushMutations(): Promise<{ ok: boolean; error?: string }> {
+async function pushMutations(): Promise<{ ok: boolean; error?: string }> {
   const mutations = await getPendingMutations();
   if (mutations.length === 0) return { ok: true };
 
@@ -106,7 +102,7 @@ export async function pushMutations(): Promise<{ ok: boolean; error?: string }> 
 // Pull: Supabase から全データを取得して IndexedDB に置く
 // ──────────────────────────────────────────
 
-export async function pullAll(): Promise<{ ok: boolean; error?: string }> {
+async function pullAll(): Promise<{ ok: boolean; error?: string }> {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "not logged in" };

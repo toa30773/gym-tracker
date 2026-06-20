@@ -69,7 +69,7 @@ export interface MenuWithExercises extends Menu {
 export const WEIGHT_STEPS = [0.25, 0.5, 1, 1.25, 2.5, 5] as const;
 export type WeightStep = (typeof WEIGHT_STEPS)[number];
 
-export function stepDecimals(step: number): number {
+function stepDecimals(step: number): number {
   const s = step.toString();
   const i = s.indexOf(".");
   return i === -1 ? 0 : s.length - i - 1;

@@ -59,7 +59,7 @@ interface GymDB extends DBSchema {
 
 let dbPromise: Promise<IDBPDatabase<GymDB>> | null = null;
 
-export function getDB(): Promise<IDBPDatabase<GymDB>> {
+function getDB(): Promise<IDBPDatabase<GymDB>> {
   if (typeof window === "undefined") {
     throw new Error("local-db is browser-only");
   }
@@ -109,19 +109,19 @@ export function getDB(): Promise<IDBPDatabase<GymDB>> {
 // Read helpers
 // ──────────────────────────────────────────
 
-export async function getAllMenusForUser(userId: string): Promise<Menu[]> {
+async function getAllMenusForUser(userId: string): Promise<Menu[]> {
   const db = await getDB();
   const all = await db.getAllFromIndex("menus", "by_user", userId);
   return all.sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
 }
 
-export async function getExercisesForMenu(menuId: string): Promise<Exercise[]> {
+async function getExercisesForMenu(menuId: string): Promise<Exercise[]> {
   const db = await getDB();
   const all = await db.getAllFromIndex("exercises", "by_menu", menuId);
   return all.sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
 }
 
-export async function getSetsForExercise(exerciseId: string): Promise<WorkoutSet[]> {
+async function getSetsForExercise(exerciseId: string): Promise<WorkoutSet[]> {
   const db = await getDB();
   const all = await db.getAllFromIndex("sets", "by_exercise", exerciseId);
   return all.sort((a, b) => a.set_number - b.set_number);
@@ -389,16 +389,3 @@ export async function getMenusWithExercisesForUser(
   return result;
 }
 
-export async function getSetLogsForUser(userId: string): Promise<SetLog[]> {
-  return getAllSetLogsForUser(userId);
-}
-
-export async function getExercisesByIds(ids: string[]): Promise<Exercise[]> {
-  const db = await getDB();
-  const out: Exercise[] = [];
-  for (const id of ids) {
-    const ex = await db.get("exercises", id);
-    if (ex) out.push(ex);
-  }
-  return out;
-}

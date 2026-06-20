@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { getAllExercisesForUser, getSetLogsForUser } from "@/lib/local-db";
+import { getAllExercisesForUser, getAllSetLogsForUser } from "@/lib/local-db";
 import { getCurrentUserId } from "@/lib/sync";
 
 interface ExerciseInfo {
@@ -103,7 +103,7 @@ function MiniLineChart({
         strokeWidth={1}
       />
       <path d={path} stroke="#111827" strokeWidth={2} fill="none" />
-      {points.map((p, i) => (
+      {points.map((_, i) => (
         <circle
           key={i}
           cx={xs[i]}
@@ -137,7 +137,7 @@ export default function WeightHistoryPage() {
 
     const [exData, logData] = await Promise.all([
       getAllExercisesForUser(userId),
-      getSetLogsForUser(userId),
+      getAllSetLogsForUser(userId),
     ]);
 
     const exercises: ExerciseInfo[] = exData.map((e) => ({
