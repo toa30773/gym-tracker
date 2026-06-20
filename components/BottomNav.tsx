@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useNavGuard } from "@/lib/nav-guard";
 
@@ -15,10 +14,8 @@ export default function BottomNav() {
   const router = useRouter();
   const { requestNavigation } = useNavGuard();
 
-  function handleClick(e: React.MouseEvent, href: string) {
-    // 同じ場所には飛ばない（無駄な guard 確認を避ける）
+  function handleClick(href: string) {
     if (href === pathname) return;
-    e.preventDefault();
     requestNavigation(() => router.push(href));
   }
 
@@ -30,10 +27,10 @@ export default function BottomNav() {
       {tabs.map((tab) => {
         const isActive = pathname === tab.href;
         return (
-          <Link
+          <button
             key={tab.href}
-            href={tab.href}
-            onClick={(e) => handleClick(e, tab.href)}
+            type="button"
+            onClick={() => handleClick(tab.href)}
             className={`flex-1 text-center px-3 py-2.5 rounded-full text-xs font-bold transition-colors ${
               isActive
                 ? "bg-gray-800 text-white"
@@ -41,7 +38,7 @@ export default function BottomNav() {
             }`}
           >
             {tab.label}
-          </Link>
+          </button>
         );
       })}
     </nav>

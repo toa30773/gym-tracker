@@ -916,6 +916,11 @@ export default function SettingsPage() {
               ))}
             </div>
             <div className="flex-1 flex items-center justify-end gap-2">
+              {isDirty && (
+                <span className="text-[10px] text-red-500 font-bold whitespace-nowrap">
+                  未保存
+                </span>
+              )}
               {message && (
                 <span className="text-[10px] text-green-600 whitespace-nowrap">
                   {message}
