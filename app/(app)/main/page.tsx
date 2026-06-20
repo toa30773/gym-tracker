@@ -5,6 +5,7 @@ import {
   getMenusWithExercisesForUser,
   getWeightUpdateCountsForSets,
   getTopSetDeltaHistory,
+  getLastActualRepsForSet,
   updateSet as updateSetLocal,
   putSetLog,
   putWeightUpdate,
@@ -28,6 +29,8 @@ interface ActualRow {
   actual_weight: number;
   actual_reps: number;
   backoff_ratio: number | null;
+  // 前回そのセットを記録した時の実レップ。履歴なしなら null。
+  previous_actual_reps: number | null;
 }
 
 interface ActualsModal {
@@ -283,8 +286,12 @@ export default function MainPage() {
     });
   }
 
-  function startComplete(exercise: ExerciseWithSets) {
+  async function startComplete(exercise: ExerciseWithSets) {
     const sortedSets = [...exercise.sets].sort((a, b) => a.set_number - b.set_number);
+    // 各セットの前回 actual_reps を並列で取得（履歴なしは null）
+    const prevReps = await Promise.all(
+      sortedSets.map((s) => getLastActualRepsForSet(exercise.id, s.id)),
+    );
     setActualsModal({
       exerciseId: exercise.id,
       exerciseName: exercise.name,
@@ -300,6 +307,7 @@ export default function MainPage() {
         // 最終セット（=トップ）は ratio を強制的に null にして UI で TOP として扱う
         backoff_ratio:
           i === sortedSets.length - 1 ? null : s.backoff_ratio ?? null,
+        previous_actual_reps: prevReps[i],
       })),
     });
     setRevealedId(null);
@@ -746,6 +754,21 @@ export default function MainPage() {
                   <span className="text-[10px] text-gray-500">
                     予定 {formatWeight(row.planned_weight, actualsModal.isAssisted)} × {row.planned_reps}回
                   </span>
+                  {/* 前回値（予定と同じなら非表示）。前回より落とさない動機づけ用 */}
+                  {row.previous_actual_reps !== null &&
+                    row.previous_actual_reps !== row.planned_reps && (
+                      <span
+                        className={`text-[10px] font-bold ${
+                          row.previous_actual_reps > row.planned_reps
+                            ? "text-emerald-600"
+                            : "text-red-500"
+                        }`}
+                      >
+                        前回 {row.previous_actual_reps}回 (
+                        {row.previous_actual_reps > row.planned_reps ? "+" : ""}
+                        {row.previous_actual_reps - row.planned_reps})
+                      </span>
+                    )}
                   {isTop ? (
                     <span className="text-[9px] font-bold text-gray-800 ml-auto">TOP（限界まで）</span>
                   ) : row.backoff_ratio !== null && row.backoff_ratio !== undefined && row.backoff_ratio < 1 ? (

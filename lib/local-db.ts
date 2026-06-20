@@ -389,6 +389,20 @@ export async function getMenusWithExercisesForUser(
   return result;
 }
 
+// 指定セットの「最後に記録された実レップ数」を返す。
+// 履歴がなければ null。表示用の「前回 X 回」表示で使う。
+export async function getLastActualRepsForSet(
+  exerciseId: string,
+  setId: string,
+): Promise<number | null> {
+  const db = await getDB();
+  const logs = await db.getAllFromIndex("set_logs", "by_exercise", exerciseId);
+  const matching = logs
+    .filter((l) => l.set_id === setId)
+    .sort((a, b) => (a.performed_at < b.performed_at ? 1 : -1));
+  return matching.length > 0 ? matching[0].actual_reps : null;
+}
+
 // 指定種目の「日付ごとのトップセットの実レップ - 予定レップ」を新しい順で返す。
 // トップセットの判定は set_number が最大のもの。
 export async function getTopSetDeltaHistory(
