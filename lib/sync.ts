@@ -80,18 +80,9 @@ async function applyMutation(mutation: Mutation): Promise<{ error: string | null
     return { error: error ? error.message : null };
   }
 
-  if (operation === "insert") {
-    // upsert にすることで「既に push 済みだが queue が残っている」状況も吸収
-    const { error } = await supabase.from(table).upsert(payload!);
-    return { error: error ? error.message : null };
-  }
-
-  if (operation === "update") {
-    const { error } = await supabase.from(table).upsert(payload!);
-    return { error: error ? error.message : null };
-  }
-
-  return { error: `unknown operation: ${operation}` };
+  // insert / update どちらも upsert で吸収する（既に push 済みのキューが残っていても安全）
+  const { error } = await supabase.from(table).upsert(payload!);
+  return { error: error ? error.message : null };
 }
 
 async function pushMutations(): Promise<{ ok: boolean; error?: string }> {
