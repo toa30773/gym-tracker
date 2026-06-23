@@ -22,8 +22,14 @@ interface LogRow {
 
 interface DatePoint {
   date: string; // YYYY-MM-DD
-  weight: number; // 日ごとの max actual_weight
-  reps: number; // その max 重量での最大 reps
+  // TOP（同日内 set_number 最大）の actual_weight / actual_reps
+  topWeight: number;
+  topReps: number;
+  // バックオフ群（TOP 以外）の代表値。bulk-sync 運用なら全部同じ値、
+  // ピラミッドなら最大値を採用（=「揃った」判定は全部 TOP と同値の時のみ）。
+  backoffWeight: number | null;
+  // その日の全セットの actual_weight が同値だったか（=「ストレート完成」マーク用）
+  allEqual: boolean;
 }
 
 interface ExerciseHistory {
@@ -58,9 +64,12 @@ function MiniLineChart({
 
   if (points.length === 0) return null;
 
-  const weights = points.map((p) => p.weight);
-  const minW = Math.min(...weights);
-  const maxW = Math.max(...weights);
+  // y軸スケールは TOP / バックオフ両方の重量を含めて決める
+  const allWeights = points.flatMap((p) =>
+    p.backoffWeight !== null ? [p.topWeight, p.backoffWeight] : [p.topWeight],
+  );
+  const minW = Math.min(...allWeights);
+  const maxW = Math.max(...allWeights);
   const range = maxW - minW || 1;
 
   const innerW = W - PAD_X * 2;
@@ -68,20 +77,37 @@ function MiniLineChart({
   const xs =
     points.length === 1
       ? [W / 2]
-      : points.map(
-          (_, i) => PAD_X + (i / (points.length - 1)) * innerW
-        );
-  // アシスト種目では数値が下がるほど改善なので、表示上は通常と同じ向きで描画（値が小さいほど下）。
-  // ユーザーには「右下がり = 改善」が直感的になるよう、is_assisted の場合は y を反転させる。
-  const ys = points.map((p) => {
-    const t = (p.weight - minW) / range; // 0..1
+      : points.map((_, i) => PAD_X + (i / (points.length - 1)) * innerW);
+
+  function yOf(weight: number): number {
+    const t = (weight - minW) / range;
     const tAdj = isAssisted ? 1 - t : t;
     return H - PAD_Y - tAdj * innerH;
-  });
+  }
 
-  const path = points
-    .map((_, i) => `${i === 0 ? "M" : "L"} ${xs[i].toFixed(1)} ${ys[i].toFixed(1)}`)
+  const topYs = points.map((p) => yOf(p.topWeight));
+  // バックオフが記録なし（=1セット種目だった日）はパスを分断する
+  const backoffSegments: { i: number; y: number }[][] = [];
+  let cur: { i: number; y: number }[] = [];
+  points.forEach((p, i) => {
+    if (p.backoffWeight === null) {
+      if (cur.length > 0) {
+        backoffSegments.push(cur);
+        cur = [];
+      }
+    } else {
+      cur.push({ i, y: yOf(p.backoffWeight) });
+    }
+  });
+  if (cur.length > 0) backoffSegments.push(cur);
+
+  const topPath = points
+    .map((_, i) => `${i === 0 ? "M" : "L"} ${xs[i].toFixed(1)} ${topYs[i].toFixed(1)}`)
     .join(" ");
+
+  const TOP_COLOR = "#ef4444"; // red-500
+  const BACKOFF_COLOR = "#3b82f6"; // blue-500
+  const EQUAL_COLOR = "#10b981"; // emerald-500
 
   return (
     <svg
@@ -99,16 +125,51 @@ function MiniLineChart({
         stroke="#e5e7eb"
         strokeWidth={1}
       />
-      <path d={path} stroke="#111827" strokeWidth={2} fill="none" />
-      {points.map((_, i) => (
+
+      {/* バックオフ線（青）。記録欠損で分断 */}
+      {backoffSegments.map((seg, idx) => {
+        const d = seg
+          .map((pt, j) => `${j === 0 ? "M" : "L"} ${xs[pt.i].toFixed(1)} ${pt.y.toFixed(1)}`)
+          .join(" ");
+        return (
+          <path
+            key={`b${idx}`}
+            d={d}
+            stroke={BACKOFF_COLOR}
+            strokeWidth={1.5}
+            fill="none"
+          />
+        );
+      })}
+
+      {/* TOP 線（赤） */}
+      <path d={topPath} stroke={TOP_COLOR} strokeWidth={2} fill="none" />
+
+      {/* バックオフ点（青、揃った日は緑） */}
+      {points.map((p, i) => {
+        if (p.backoffWeight === null) return null;
+        return (
+          <circle
+            key={`bp${i}`}
+            cx={xs[i]}
+            cy={yOf(p.backoffWeight)}
+            r={3}
+            fill={p.allEqual ? EQUAL_COLOR : BACKOFF_COLOR}
+          />
+        );
+      })}
+
+      {/* TOP 点（赤、揃った日は緑） */}
+      {points.map((p, i) => (
         <circle
-          key={i}
+          key={`tp${i}`}
           cx={xs[i]}
-          cy={ys[i]}
+          cy={topYs[i]}
           r={3}
-          fill="#111827"
+          fill={p.allEqual ? EQUAL_COLOR : TOP_COLOR}
         />
       ))}
+
       {/* y軸ラベル: 最小・最大 */}
       <text x={2} y={PAD_Y + 4} fontSize={9} fill="#9ca3af">
         {isAssisted ? minW : maxW}
@@ -164,22 +225,35 @@ export default function WeightHistoryPage() {
       const rows = byEx.get(ex.id);
       if (!rows || rows.length === 0) continue;
 
-      // 日付ごとに max weight、その重量の最大 reps を抽出
-      const byDate = new Map<string, { weight: number; reps: number }>();
+      // 日付ごとに log を集めて、TOP（set_number 最大）とバックオフ群に分解
+      const byDate = new Map<string, LogRow[]>();
       for (const r of rows) {
         const key = dateKey(r.performed_at);
-        const cur = byDate.get(key);
-        if (!cur) {
-          byDate.set(key, { weight: r.actual_weight, reps: r.actual_reps });
-        } else if (r.actual_weight > cur.weight) {
-          byDate.set(key, { weight: r.actual_weight, reps: r.actual_reps });
-        } else if (r.actual_weight === cur.weight && r.actual_reps > cur.reps) {
-          byDate.set(key, { weight: r.actual_weight, reps: r.actual_reps });
-        }
+        if (!byDate.has(key)) byDate.set(key, []);
+        byDate.get(key)!.push(r);
       }
 
       const points: DatePoint[] = [...byDate.entries()]
-        .map(([date, v]) => ({ date, weight: v.weight, reps: v.reps }))
+        .map(([date, logs]) => {
+          const maxSet = Math.max(...logs.map((l) => l.set_number));
+          const top = logs.find((l) => l.set_number === maxSet)!;
+          const backoffs = logs.filter((l) => l.set_number !== maxSet);
+          // バックオフの代表値: 同期運用なら全部同値、ピラミッドなら最大値を採用
+          const backoffWeight =
+            backoffs.length === 0
+              ? null
+              : Math.max(...backoffs.map((b) => b.actual_weight));
+          // 「全セット同値」判定（=ストレート完成。緑マーカー対象）
+          const allEqual =
+            logs.length >= 2 && logs.every((l) => l.actual_weight === top.actual_weight);
+          return {
+            date,
+            topWeight: top.actual_weight,
+            topReps: top.actual_reps,
+            backoffWeight,
+            allEqual,
+          };
+        })
         .sort((a, b) => a.date.localeCompare(b.date));
 
       results.push({ info: ex, points });
@@ -238,9 +312,17 @@ export default function WeightHistoryPage() {
       {histories.map((h) => {
         const first = h.points[0];
         const last = h.points[h.points.length - 1];
-        const change = h.info.is_assisted
-          ? first.weight - last.weight
-          : last.weight - first.weight;
+        // 右上の変化値は「全セットが揃った日」だけを対象にする。
+        // 「更新回数」の定義と一致させ、揃ってない TOP の上下に振り回されないようにする。
+        const equalPoints = h.points.filter((p) => p.allEqual);
+        const firstEqual = equalPoints[0] ?? null;
+        const lastEqual = equalPoints[equalPoints.length - 1] ?? null;
+        const change =
+          firstEqual && lastEqual
+            ? h.info.is_assisted
+              ? firstEqual.topWeight - lastEqual.topWeight
+              : lastEqual.topWeight - firstEqual.topWeight
+            : null;
         const isOpen = openId === h.info.id;
         return (
           <div key={h.info.id} className="px-4 py-3 border-b border-gray-100">
@@ -261,27 +343,48 @@ export default function WeightHistoryPage() {
                 {formatMd(first.date)} → {formatMd(last.date)}
               </span>
               <span className="text-xs">
-                <span className="text-gray-500">
-                  {formatWeight(first.weight, h.info.is_assisted)}
-                </span>
-                <span className="mx-1">→</span>
-                <span className="font-bold">
-                  {formatWeight(last.weight, h.info.is_assisted)}
-                </span>
-                {change !== 0 && (
-                  <span
-                    className={`ml-1 text-[10px] ${
-                      change > 0 ? "text-emerald-600" : "text-red-500"
-                    }`}
-                  >
-                    ({change > 0 ? "+" : ""}
-                    {(+change.toFixed(2)).toString()}kg)
-                  </span>
+                {firstEqual && lastEqual ? (
+                  <>
+                    <span className="text-gray-500">
+                      {formatWeight(firstEqual.topWeight, h.info.is_assisted)}
+                    </span>
+                    <span className="mx-1">→</span>
+                    <span className="font-bold">
+                      {formatWeight(lastEqual.topWeight, h.info.is_assisted)}
+                    </span>
+                    {change !== null && change !== 0 && (
+                      <span
+                        className={`ml-1 text-[10px] ${
+                          change > 0 ? "text-emerald-600" : "text-red-500"
+                        }`}
+                      >
+                        ({change > 0 ? "+" : ""}
+                        {(+change.toFixed(2)).toString()}kg)
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-gray-400">揃った日なし</span>
                 )}
               </span>
             </div>
 
             <MiniLineChart points={h.points} isAssisted={h.info.is_assisted} />
+
+            {/* 凡例 */}
+            <div className="flex items-center gap-3 mt-1 text-[9px] text-gray-500">
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2.5 h-0.5 bg-red-500" /> TOP
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2.5 h-0.5 bg-blue-500" />
+                バックオフ
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+                揃った日
+              </span>
+            </div>
 
             <div className="flex items-center justify-between mt-1">
               <span className="text-[10px] text-gray-400">
@@ -300,14 +403,20 @@ export default function WeightHistoryPage() {
                 {[...h.points].reverse().map((p) => (
                   <li
                     key={p.date}
-                    className="flex items-center justify-between bg-gray-100 rounded-lg px-3 py-1.5 text-[10px]"
+                    className={`flex items-center justify-between rounded-lg px-3 py-1.5 text-[10px] ${
+                      p.allEqual ? "bg-emerald-50 border border-emerald-200" : "bg-gray-100"
+                    }`}
                   >
                     <span className="text-gray-500">{formatMd(p.date)}</span>
-                    <span>
-                      <span className="font-bold">
-                        {formatWeight(p.weight, h.info.is_assisted)}
+                    <span className="text-right">
+                      <span className="text-red-500 font-bold">
+                        TOP {formatWeight(p.topWeight, h.info.is_assisted)} ×{p.topReps}
                       </span>
-                      <span className="ml-2 text-gray-500">× {p.reps}回</span>
+                      {p.backoffWeight !== null && (
+                        <span className="ml-2 text-blue-500">
+                          BO {formatWeight(p.backoffWeight, h.info.is_assisted)}
+                        </span>
+                      )}
                     </span>
                   </li>
                 ))}

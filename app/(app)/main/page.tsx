@@ -3,12 +3,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   getMenusWithExercisesForUser,
-  getWeightUpdateCountsForSets,
-  getTopSetDeltaHistory,
-  getLastActualRepsForSet,
-  updateSet as updateSetLocal,
+  getEqualWeightMilestones,
+  getLastActualForSet,
   putSetLog,
-  putWeightUpdate,
   newId,
   nowIso,
 } from "@/lib/local-db";
@@ -29,8 +26,8 @@ interface ActualRow {
   planned_reps: number;
   actual_weight: number;
   actual_reps: number;
-  backoff_ratio: number | null;
-  // 前回そのセットを記録した時の実レップ。履歴なしなら null。
+  // 前回そのセットを記録した時の実重量・実レップ。履歴なしなら null。
+  previous_actual_weight: number | null;
   previous_actual_reps: number | null;
 }
 
@@ -40,33 +37,6 @@ interface ActualsModal {
   isAssisted: boolean;
   weightStep: number;
   rows: ActualRow[];
-}
-
-interface ProgressionSuggestion {
-  exerciseId: string;
-  exerciseName: string;
-  isAssisted: boolean;
-  topPlanned: number;
-  topActual: number;
-  topDelta: number; // 実 - 予定
-  streak: number; // 同じ方向（オーバー / 不足）が連続したセッション数（今回含む）
-  // 'up' = TOP のみ kg 加算
-  // 'down' = 全セット kg 減算（均一時のみ）
-  // 'down-to-match' = TOP のみ、最大バックオフに合わせる（不均一時の DOWN）
-  // 'reps-up' / 'reps-down' = 自重種目（TOP 重量 0）の場合、全セットの予定レップ数を増減
-  // 'hold' = 提案なし
-  action: "up" | "down" | "down-to-match" | "reps-up" | "reps-down" | "hold";
-  // TOP 重量が 0 = 自重種目
-  isBodyweight: boolean;
-  step: number;
-  // 全セットの重量が同一か。UP は揃ってる時しか提案しない（揃ってないなら upBlocked になる）。
-  allEqual: boolean;
-  // UP の信号は立ったが全セット未揃いのため現状維持
-  upBlocked: boolean;
-  // 非 TOP セットの最大重量（down-to-match で TOP を揃える先）
-  maxBackoffWeight: number;
-  // TOP 以外のセットで「予定回数に届かなかったもの」。重量判断には使わず、情報として表示するだけ。
-  backoffShortages: { setNumber: number; planned: number; actual: number }[];
 }
 
 const DAY_MAP: Record<number, string> = {
@@ -108,18 +78,18 @@ function todayKey(): string {
 
 export default function MainPage() {
   const [menu, setMenu] = useState<MenuWithExercises | null>(null);
-  const [updateCounts, setUpdateCounts] = useState<Record<string, number>>({});
+  // 種目ごとの「バックオフ=TOP に揃った新 weight 到達回数」（初期値を除く）。
+  const [milestones, setMilestones] = useState<Record<string, number>>({});
+  // セット ID をキーにした「前回の実重量・実レップ」。表示用。
+  const [prevActuals, setPrevActuals] = useState<
+    Record<string, { weight: number; reps: number } | null>
+  >({});
   const [loading, setLoading] = useState(true);
-  const [memoEdits, setMemoEdits] = useState<Record<string, string>>({});
-  const [savingMemo, setSavingMemo] = useState<string | null>(null);
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
   const [revealedId, setRevealedId] = useState<string | null>(null);
   const [actualsModal, setActualsModal] = useState<ActualsModal | null>(null);
   const [savingActuals, setSavingActuals] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [progression, setProgression] = useState<ProgressionSuggestion | null>(null);
-  // 「計画に反映」で実際に上げ下げする kg（文字列で持っておくと空欄編集中の状態が綺麗）
-  const [progressionDeltaInput, setProgressionDeltaInput] = useState<string>("");
   const swipeStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
   const lastDateRef = useRef<string>(todayKey());
 
@@ -211,21 +181,22 @@ export default function MainPage() {
 
     setMenu(combinedMenu);
 
-    // 重量更新回数を取得
-    const setIds = combinedMenu.exercises.flatMap((ex) => ex.sets.map((s) => s.id));
-    if (setIds.length > 0) {
-      const counts = await getWeightUpdateCountsForSets(setIds);
-      const exCounts: Record<string, number> = {};
-      combinedMenu.exercises.forEach((ex) => {
-        exCounts[ex.id] = ex.sets.reduce(
-          (sum: number, s: WorkoutSet) => sum + (counts[s.id] || 0),
-          0
-        );
-      });
-      setUpdateCounts(exCounts);
-    } else {
-      setUpdateCounts({});
-    }
+    // 各種目の「揃った重量レベル到達数」と、各セットの「前回実績」を並列取得。
+    const [milestoneEntries, prevEntries] = await Promise.all([
+      Promise.all(
+        combinedMenu.exercises.map(async (ex) => [
+          ex.id,
+          await getEqualWeightMilestones(ex.id),
+        ] as const),
+      ),
+      Promise.all(
+        combinedMenu.exercises.flatMap((ex) =>
+          ex.sets.map(async (s) => [s.id, await getLastActualForSet(ex.id, s.id)] as const),
+        ),
+      ),
+    ]);
+    setMilestones(Object.fromEntries(milestoneEntries));
+    setPrevActuals(Object.fromEntries(prevEntries));
 
     setLoading(false);
   }, []);
@@ -253,36 +224,6 @@ export default function MainPage() {
     };
   }, [syncDay, fetchTodayMenu]);
 
-  async function saveMemo(exerciseId: string, setIds: string[], memo: string) {
-    setSavingMemo(exerciseId);
-    try {
-      const target = menu?.exercises.find((e) => e.id === exerciseId);
-      if (target) {
-        for (const s of target.sets) {
-          if (setIds.includes(s.id)) {
-            await updateSetLocal({ ...s, memo: memo || null });
-          }
-        }
-      }
-      setMenu((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          exercises: prev.exercises.map((ex) =>
-            ex.id === exerciseId
-              ? { ...ex, sets: ex.sets.map((s) => ({ ...s, memo: memo || null })) }
-              : ex
-          ),
-        };
-      });
-      runSync().catch(() => {});
-    } catch (e) {
-      console.error("メモの保存に失敗しました", e);
-    } finally {
-      setSavingMemo(null);
-    }
-  }
-
   function addCompleted(exerciseId: string) {
     setCompletedIds((prev) => {
       const next = new Set(prev);
@@ -299,9 +240,9 @@ export default function MainPage() {
 
   async function startComplete(exercise: ExerciseWithSets) {
     const sortedSets = [...exercise.sets].sort((a, b) => a.set_number - b.set_number);
-    // 各セットの前回 actual_reps を並列で取得（履歴なしは null）
-    const prevReps = await Promise.all(
-      sortedSets.map((s) => getLastActualRepsForSet(exercise.id, s.id)),
+    // 各セットの前回 actual を並列で取得（履歴なしは null）
+    const prevList = await Promise.all(
+      sortedSets.map((s) => getLastActualForSet(exercise.id, s.id)),
     );
     setActualsModal({
       exerciseId: exercise.id,
@@ -315,10 +256,8 @@ export default function MainPage() {
         planned_reps: s.reps,
         actual_weight: s.weight,
         actual_reps: s.reps,
-        // 最終セット（=トップ）は ratio を強制的に null にして UI で TOP として扱う
-        backoff_ratio:
-          i === sortedSets.length - 1 ? null : s.backoff_ratio ?? null,
-        previous_actual_reps: prevReps[i],
+        previous_actual_weight: prevList[i]?.weight ?? null,
+        previous_actual_reps: prevList[i]?.reps ?? null,
       })),
     });
     setRevealedId(null);
@@ -345,22 +284,24 @@ export default function MainPage() {
 
       const performedAt = nowIso();
       try {
-        for (const r of actualsModal.rows) {
-          await putSetLog({
-            id: newId(),
-            set_id: r.set_id,
-            exercise_id: actualsModal.exerciseId,
-            user_id: userId,
-            performed_at: performedAt,
-            set_number: r.set_number,
-            planned_weight: r.planned_weight,
-            planned_reps: r.planned_reps,
-            actual_weight: r.actual_weight,
-            actual_reps: r.actual_reps,
-            is_assisted: actualsModal.isAssisted,
-            rir: null,
-          });
-        }
+        await Promise.all(
+          actualsModal.rows.map((r) =>
+            putSetLog({
+              id: newId(),
+              set_id: r.set_id,
+              exercise_id: actualsModal.exerciseId,
+              user_id: userId,
+              performed_at: performedAt,
+              set_number: r.set_number,
+              planned_weight: r.planned_weight,
+              planned_reps: r.planned_reps,
+              actual_weight: r.actual_weight,
+              actual_reps: r.actual_reps,
+              is_assisted: actualsModal.isAssisted,
+              rir: null,
+            }),
+          ),
+        );
       } catch (e) {
         setSaveError(
           `保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`
@@ -368,193 +309,27 @@ export default function MainPage() {
         return;
       }
       runSync().catch(() => {});
-
       addCompleted(actualsModal.exerciseId);
 
-      // 進歩判定：トップセットの実 - 予定 と、同じ方向の連続セッション数 (streak) から決める。
-      // 重量を「何 kg 上げる／下げる」は前もって表示せず、提案だけ伝える方針。
-      const isAssisted = actualsModal.isAssisted;
-      const rows = actualsModal.rows;
-      const top = rows[rows.length - 1];
-      const topDelta = top.actual_reps - top.planned_reps;
-      const sign = topDelta > 0 ? 1 : topDelta < 0 ? -1 : 0;
-
-      // 過去ログ（今回のものは IndexedDB に既に書き込み済み）を新しい順で取り、
-      // 同じ方向が続いている連続セッション数を数える。
-      const history = await getTopSetDeltaHistory(actualsModal.exerciseId);
-      let streak = 0;
-      if (sign !== 0) {
-        for (const h of history) {
-          const s = h.delta > 0 ? 1 : h.delta < 0 ? -1 : 0;
-          if (s === sign) streak += 1;
-          else break;
-        }
-      }
-
-      // 大幅（±3 回以上）は 1 回で提案、そうでなければ 2 セッション連続で提案。
-      const STREAK_THRESHOLD = 2;
-      const BIG_DELTA = 3;
-      // 全セットの重量が TOP と揃っているか（=ストレートに整っている）。
-      // 揃ってない時は UP 信号を出してもユーザーはまずバックオフを追いつかせるべき。
-      const baseWeight = rows[0]?.planned_weight ?? 0;
-      const allEqual = rows.every((r) => r.planned_weight === baseWeight);
-      // TOP 重量が 0 なら自重種目（アシスト 0 でも、非アシスト 0 でも同じく "自重"）。
-      // 重量での増減はできないので、進歩はレップで表現する。
-      const isBodyweight = top.planned_weight === 0;
-
-      let action: ProgressionSuggestion["action"] = "hold";
-      let upBlocked = false;
-      const upSignal =
-        sign > 0 && (Math.abs(topDelta) >= BIG_DELTA || streak >= STREAK_THRESHOLD);
-      const downSignal =
-        sign < 0 && (Math.abs(topDelta) >= BIG_DELTA || streak >= STREAK_THRESHOLD);
-      if (upSignal) {
-        if (isBodyweight) action = "reps-up";
-        else if (allEqual) action = "up";
-        else upBlocked = true;
-      } else if (downSignal) {
-        if (isBodyweight) action = "reps-down";
-        else action = allEqual ? "down" : "down-to-match";
-      }
-
-      // TOP 以外で予定回数に届かなかったセット（情報表示用）。
-      // 進歩判定には使わない。
-      const backoffShortages = rows
-        .slice(0, -1)
-        .filter((r) => r.actual_reps < r.planned_reps)
-        .map((r) => ({
-          setNumber: r.set_number,
-          planned: r.planned_reps,
-          actual: r.actual_reps,
-        }));
-
-      // バックオフの最大重量（down-to-match の TOP 到達先）
-      const maxBackoffWeight = rows
-        .slice(0, -1)
-        .reduce((m, r) => Math.max(m, r.planned_weight), 0);
-
-      setProgression({
-        exerciseId: actualsModal.exerciseId,
-        exerciseName: actualsModal.exerciseName,
-        isAssisted,
-        topPlanned: top.planned_reps,
-        topActual: top.actual_reps,
-        topDelta,
-        streak,
-        action,
-        step: actualsModal.weightStep,
-        allEqual,
-        upBlocked,
-        maxBackoffWeight,
-        isBodyweight,
-        backoffShortages,
+      // 次回の "前回" 表示・"更新回数" の即時反映のため、当該種目だけ再取得して上書き。
+      const exId = actualsModal.exerciseId;
+      const [newMilestone, ...newPrev] = await Promise.all([
+        getEqualWeightMilestones(exId),
+        ...actualsModal.rows.map((r) => getLastActualForSet(exId, r.set_id)),
+      ]);
+      setMilestones((m) => ({ ...m, [exId]: newMilestone }));
+      setPrevActuals((p) => {
+        const next = { ...p };
+        actualsModal.rows.forEach((r, i) => {
+          next[r.set_id] = newPrev[i] as { weight: number; reps: number } | null;
+        });
+        return next;
       });
-      // 重量 action は kg、自重 action はレップを既定値に。
-      setProgressionDeltaInput(
-        action === "reps-up" || action === "reps-down"
-          ? "1"
-          : String(actualsModal.weightStep),
-      );
 
       setActualsModal(null);
     } finally {
       setSavingActuals(false);
     }
-  }
-
-  async function applyProgression() {
-    if (!progression) return;
-    if (progression.action === "hold") {
-      setProgression(null);
-      return;
-    }
-    const userId = await getCurrentUserId();
-    if (!userId) return;
-
-    const ex = menu?.exercises.find((e) => e.id === progression.exerciseId);
-    if (!ex) {
-      setProgression(null);
-      return;
-    }
-
-    const direction = progression.isAssisted ? -1 : 1;
-    const sortedSets = [...ex.sets].sort((a, b) => a.set_number - b.set_number);
-    const top = sortedSets[sortedSets.length - 1];
-
-    // 自重種目（reps-up / reps-down）：全セットの planned reps を増減。重量は変えない。
-    if (progression.action === "reps-up" || progression.action === "reps-down") {
-      const deltaReps = parseInt(progressionDeltaInput, 10);
-      if (!Number.isFinite(deltaReps) || deltaReps <= 0) {
-        setProgression(null);
-        return;
-      }
-      const sign = progression.action === "reps-up" ? 1 : -1;
-      for (const s of sortedSets) {
-        const newReps = Math.max(1, s.reps + sign * deltaReps);
-        if (newReps === s.reps) continue;
-        try {
-          await updateSetLocal({
-            ...s,
-            reps: newReps,
-            backoff_ratio: s.backoff_ratio ?? null,
-          });
-        } catch (e) {
-          console.error("レップ数の更新に失敗しました", e);
-        }
-      }
-      runSync().catch(() => {});
-      setProgression(null);
-      await fetchTodayMenu();
-      return;
-    }
-
-    // 重量系：適用対象セットと新重量計算を action ごとに決める。
-    let updates: { set: WorkoutSet; newWeight: number }[] = [];
-    if (progression.action === "down-to-match") {
-      const maxBackoff = sortedSets
-        .slice(0, -1)
-        .reduce((m, s) => Math.max(m, s.weight), 0);
-      updates = [{ set: top, newWeight: maxBackoff }];
-    } else {
-      const deltaKg = parseFloat(progressionDeltaInput);
-      if (!Number.isFinite(deltaKg) || deltaKg <= 0) {
-        setProgression(null);
-        return;
-      }
-      const sign = progression.action === "up" ? 1 : -1;
-      const targets = progression.action === "up" ? [top] : sortedSets;
-      updates = targets.map((s) => ({
-        set: s,
-        newWeight: Math.max(
-          0,
-          roundToStep(s.weight + sign * deltaKg * direction, progression.step),
-        ),
-      }));
-    }
-
-    for (const { set: s, newWeight } of updates) {
-      if (newWeight === s.weight) continue;
-      try {
-        await updateSetLocal({
-          ...s,
-          weight: newWeight,
-          backoff_ratio: s.backoff_ratio ?? null,
-        });
-        await putWeightUpdate({
-          id: newId(),
-          set_id: s.id,
-          user_id: userId,
-          old_weight: s.weight,
-          new_weight: newWeight,
-          updated_at: nowIso(),
-        });
-      } catch (e) {
-        console.error("重量の更新に失敗しました", e);
-      }
-    }
-    runSync().catch(() => {});
-    setProgression(null);
-    await fetchTodayMenu();
   }
 
   function handleSwipeStart(e: React.TouchEvent, exId: string) {
@@ -638,10 +413,6 @@ export default function MainPage() {
           {visibleGroups.map((group, gIdx) => (
             <div key={`${group.body_part}-${gIdx}`}>
               {group.exercises.map((ex, exIdxInGroup) => {
-                  const currentMemo = ex.sets[0]?.memo || "";
-                  const editedMemo = memoEdits[ex.id] ?? currentMemo;
-                  const isDirty = editedMemo !== currentMemo;
-                  const isSaving = savingMemo === ex.id;
                   const machineHeight =
                     ex.sets.find((s) => s.machine_height)?.machine_height || "";
                   const isGroupHead = exIdxInGroup === 0;
@@ -670,7 +441,7 @@ export default function MainPage() {
                           onTouchEnd={(e) => handleSwipeEnd(e, ex.id)}
                         >
                           <div className="px-4 py-2">
-                            {/* 部位（グループ先頭のみ） + 更新回数 */}
+                            {/* 部位（グループ先頭のみ） + 更新回数（バックオフ=TOP に揃った重量レベル到達数） */}
                             <div className="flex items-center justify-between mb-1">
                               {isGroupHead ? (
                                 <div className="inline-flex px-3 py-1 border border-gray-400 rounded-full text-xs">
@@ -680,7 +451,7 @@ export default function MainPage() {
                                 <span />
                               )}
                               <span className="text-xs text-gray-500">
-                                重量更新回数{updateCounts[ex.id] || 0}回
+                                更新回数{milestones[ex.id] ?? 0}回
                               </span>
                             </div>
 
@@ -697,76 +468,41 @@ export default function MainPage() {
                               )}
                             </div>
 
-                            {/* セットリスト（末尾=TOP、その他=バックオフ） */}
+                            {/* セットリスト（末尾=TOP、その他=バックオフ）。
+                                各セットの下に「前回 Xkg ×Y」を薄く表示。 */}
                             {ex.sets.map((s: WorkoutSet, sIdx) => {
                               const isTop = sIdx === ex.sets.length - 1;
+                              const prev = prevActuals[s.id];
                               return (
-                                <div key={s.id} className="flex items-center gap-2 mb-1.5 pl-4">
-                                  <div
-                                    className={`flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${
-                                      isTop
-                                        ? "bg-gray-800 text-white"
-                                        : "bg-gray-200"
-                                    }`}
-                                  >
-                                    {s.set_number}
+                                <div key={s.id} className="mb-1.5">
+                                  <div className="flex items-center gap-2 pl-4">
+                                    <div
+                                      className={`flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${
+                                        isTop
+                                          ? "bg-gray-800 text-white"
+                                          : "bg-gray-200"
+                                      }`}
+                                    >
+                                      {s.set_number}
+                                    </div>
+                                    <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
+                                      {formatWeight(s.weight, ex.is_assisted)}
+                                      {isTop && (
+                                        <span className="ml-1 text-[9px] text-gray-700 font-bold">TOP</span>
+                                      )}
+                                    </div>
+                                    <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
+                                      {s.reps}回
+                                    </div>
                                   </div>
-                                  <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
-                                    {formatWeight(s.weight, ex.is_assisted)}
-                                    {isTop && (
-                                      <span className="ml-1 text-[9px] text-gray-700 font-bold">TOP</span>
-                                    )}
-                                  </div>
-                                  <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
-                                    {s.reps}回
-                                  </div>
+                                  {prev && (
+                                    <div className="pl-11 text-[9px] text-gray-400 mt-0.5">
+                                      前回 {formatWeight(prev.weight, ex.is_assisted)} ×{prev.reps}回
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
-
-                            {/* メモ（編集可能） */}
-                            <div className="mt-2 pl-4">
-                              <textarea
-                                value={editedMemo}
-                                onChange={(e) =>
-                                  setMemoEdits((prev) => ({ ...prev, [ex.id]: e.target.value }))
-                                }
-                                placeholder="メモを入力"
-                                rows={2}
-                                className="w-full bg-gray-200 rounded-xl px-3 py-2 text-xs resize-none outline-none placeholder-gray-500"
-                              />
-                              {isDirty && (
-                                <div className="flex justify-end mt-1 gap-2">
-                                  <button
-                                    onClick={() =>
-                                      setMemoEdits((prev) => {
-                                        const next = { ...prev };
-                                        delete next[ex.id];
-                                        return next;
-                                      })
-                                    }
-                                    className="text-[10px] text-gray-500 underline"
-                                  >
-                                    キャンセル
-                                  </button>
-                                  <button
-                                    onClick={async () => {
-                                      const setIds = ex.sets.map((s) => s.id);
-                                      await saveMemo(ex.id, setIds, editedMemo);
-                                      setMemoEdits((prev) => {
-                                        const next = { ...prev };
-                                        delete next[ex.id];
-                                        return next;
-                                      });
-                                    }}
-                                    disabled={isSaving}
-                                    className="text-[10px] bg-gray-800 text-white px-2 py-0.5 rounded-full font-bold disabled:opacity-50"
-                                  >
-                                    {isSaving ? "保存中..." : "メモを保存"}
-                                  </button>
-                                </div>
-                              )}
-                            </div>
                           </div>
                         </div>
                       </div>
@@ -937,221 +673,6 @@ export default function MainPage() {
         </div>
       )}
 
-      {/* 進歩提案モーダル：定量的な kg は出さず、超過 / 不足の回数と連続セッション数だけ伝える。 */}
-      {progression && (() => {
-        const { topPlanned, topActual, topDelta, streak, action } = progression;
-        const sign = topDelta > 0 ? 1 : topDelta < 0 ? -1 : 0;
-        const STREAK_NEEDED = 2;
-        return (
-          <div
-            className="fixed inset-0 bg-black/40 z-50 flex items-end"
-            onClick={() => setProgression(null)}
-          >
-            <div
-              className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-5 pb-8"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <p className="text-center text-base font-bold mb-3">
-                {progression.exerciseName}
-              </p>
-              <p className="text-center text-sm mb-1">
-                トップ 予定 {topPlanned}回 → 実 {topActual}回
-                <span
-                  className={`ml-2 font-bold ${
-                    sign > 0
-                      ? "text-emerald-600"
-                      : sign < 0
-                      ? "text-red-500"
-                      : "text-gray-500"
-                  }`}
-                >
-                  ({topDelta > 0 ? "+" : ""}
-                  {topDelta}回)
-                </span>
-              </p>
-              {sign !== 0 && (
-                <p className="text-center text-xs text-gray-600 mb-3">
-                  {sign > 0 ? "+回オーバー" : "-回不足"} が{" "}
-                  <span className="font-bold">{streak}</span> セッション連続
-                </p>
-              )}
-              {sign === 0 && (
-                <p className="text-center text-xs text-gray-600 mb-3">
-                  予定通りピッタリ。今の重量で安定中。
-                </p>
-              )}
-
-              {/* 重量判定とは独立。バックオフ側で予定回数に届かなかったセットを情報表示。 */}
-              {progression.backoffShortages.length > 0 && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
-                  <p className="text-[10px] font-bold text-amber-800 mb-1">
-                    バックオフで予定回数に届かなかったセット
-                  </p>
-                  {progression.backoffShortages.map((b) => (
-                    <p key={b.setNumber} className="text-[10px] text-amber-900">
-                      セット{b.setNumber}：予定 {b.planned}回 / 実 {b.actual}回
-                      <span className="ml-1 text-amber-700">
-                        (-{b.planned - b.actual})
-                      </span>
-                    </p>
-                  ))}
-                  <p className="text-[9px] text-amber-700 mt-1">
-                    続くようなら、バックオフの予定回数や％の見直しを検討
-                  </p>
-                </div>
-              )}
-
-              {action === "up" && (
-                <div className="mb-4">
-                  <p className="text-center text-base font-bold text-emerald-700 mb-2">
-                    → {progression.isAssisted
-                      ? "補助を減らしましょう"
-                      : "重量を上げましょう"}
-                  </p>
-                  <div className="flex items-center justify-center gap-2 text-xs">
-                    <span>TOP に</span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      step={progression.step}
-                      value={progressionDeltaInput}
-                      placeholder={String(progression.step)}
-                      onChange={(e) => setProgressionDeltaInput(e.target.value)}
-                      onFocus={(e) => e.currentTarget.select()}
-                      className="w-16 text-center text-base font-bold bg-gray-100 rounded outline-none py-1"
-                    />
-                    <span>kg を加算</span>
-                  </div>
-                  <p className="text-center text-[10px] text-gray-500 mt-1">
-                    他のセットはそのまま。自分の判断で後から追いつかせてください。
-                  </p>
-                </div>
-              )}
-              {action === "down" && (
-                <div className="mb-4">
-                  <p className="text-center text-base font-bold text-red-600 mb-2">
-                    → {progression.isAssisted
-                      ? "補助を増やしましょう"
-                      : "重量を下げましょう"}
-                  </p>
-                  <div className="flex items-center justify-center gap-2 text-xs">
-                    <span>全セットから</span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      step={progression.step}
-                      value={progressionDeltaInput}
-                      placeholder={String(progression.step)}
-                      onChange={(e) => setProgressionDeltaInput(e.target.value)}
-                      onFocus={(e) => e.currentTarget.select()}
-                      className="w-16 text-center text-base font-bold bg-gray-100 rounded outline-none py-1"
-                    />
-                    <span>kg を減算</span>
-                  </div>
-                </div>
-              )}
-              {action === "down-to-match" && (
-                <div className="mb-4">
-                  <p className="text-center text-base font-bold text-red-600 mb-2">
-                    → TOP の重量を下げましょう
-                  </p>
-                  <p className="text-center text-xs text-gray-700">
-                    TOP をバックオフと同じ{" "}
-                    <span className="font-bold">{progression.maxBackoffWeight}kg</span>{" "}
-                    に戻します
-                  </p>
-                  <p className="text-center text-[10px] text-gray-500 mt-1">
-                    バックオフはそのまま。揃え直してから次の挑戦を。
-                  </p>
-                </div>
-              )}
-              {action === "reps-up" && (
-                <div className="mb-4">
-                  <p className="text-center text-base font-bold text-emerald-700 mb-2">
-                    → 予定レップ数を増やしましょう（自重種目）
-                  </p>
-                  <div className="flex items-center justify-center gap-2 text-xs">
-                    <span>全セットに</span>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={1}
-                      step={1}
-                      value={progressionDeltaInput}
-                      placeholder="1"
-                      onChange={(e) => setProgressionDeltaInput(e.target.value)}
-                      onFocus={(e) => e.currentTarget.select()}
-                      className="w-16 text-center text-base font-bold bg-gray-100 rounded outline-none py-1"
-                    />
-                    <span>回 追加</span>
-                  </div>
-                </div>
-              )}
-              {action === "reps-down" && (
-                <div className="mb-4">
-                  <p className="text-center text-base font-bold text-red-600 mb-2">
-                    → 予定レップ数を減らしましょう（自重種目）
-                  </p>
-                  <div className="flex items-center justify-center gap-2 text-xs">
-                    <span>全セットから</span>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={1}
-                      step={1}
-                      value={progressionDeltaInput}
-                      placeholder="1"
-                      onChange={(e) => setProgressionDeltaInput(e.target.value)}
-                      onFocus={(e) => e.currentTarget.select()}
-                      className="w-16 text-center text-base font-bold bg-gray-100 rounded outline-none py-1"
-                    />
-                    <span>回 減算</span>
-                  </div>
-                </div>
-              )}
-              {progression.upBlocked && (
-                <p className="text-center text-xs text-gray-600 mb-4 px-2">
-                  TOP は調子よいけど、他のセットがまだ TOP の重量に追いついていません。
-                  まずバックオフの重量を上げて揃ってから次回の signal を待ちましょう。
-                </p>
-              )}
-              {action === "hold" && !progression.upBlocked && sign !== 0 && (
-                <p className="text-center text-xs text-gray-500 mb-4">
-                  あと {Math.max(0, STREAK_NEEDED - streak)} セッション同じ調子なら提案します
-                </p>
-              )}
-
-              <div className="flex gap-2">
-                {action !== "hold" ? (
-                  <>
-                    <button
-                      onClick={() => setProgression(null)}
-                      className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold"
-                    >
-                      現状維持
-                    </button>
-                    <button
-                      onClick={applyProgression}
-                      className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
-                    >
-                      計画に反映
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    onClick={() => setProgression(null)}
-                    className="flex-1 py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
-                  >
-                    OK
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 }

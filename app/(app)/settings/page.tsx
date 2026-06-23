@@ -60,7 +60,6 @@ interface ExerciseData {
   id?: string;
   body_part: string;
   name: string;
-  memo: string;
   weight_step: number;
   is_assisted: boolean;
   sets: SetData[];
@@ -93,7 +92,6 @@ const defaultSet = (n: number): SetData => ({
 const defaultExercise = (): ExerciseData => ({
   body_part: "胸",
   name: "",
-  memo: "",
   weight_step: 2.5,
   is_assisted: false,
   sets: [defaultSet(1)],
@@ -163,7 +161,6 @@ export default function SettingsPage() {
               id: ex.id,
               body_part: ex.body_part,
               name: ex.name,
-              memo: ex.sets[0]?.memo || "",
               weight_step: ex.weight_step ?? 2.5,
               is_assisted: ex.is_assisted ?? false,
               sets: ex.sets
@@ -321,7 +318,6 @@ export default function SettingsPage() {
       const copy: ExerciseData = {
         body_part: src.body_part,
         name: "",
-        memo: "",
         weight_step: 2.5,
         is_assisted: false,
         sets: [defaultSet(1)],
@@ -348,7 +344,6 @@ export default function SettingsPage() {
     const copy: ExerciseData = {
       body_part: src.body_part,
       name: src.name,
-      memo: sortedSets[0]?.memo || "",
       weight_step: src.weight_step ?? 2.5,
       is_assisted: src.is_assisted ?? false,
       sets: sortedSets.map((s, i) => ({
@@ -594,7 +589,7 @@ export default function SettingsPage() {
           weight: s.weight,
           reps: s.reps,
           machine_height: sharedMachineHeight,
-          memo: ex.memo || null,
+          memo: null,
           backoff_ratio: null,
         }));
         const isNewSetFlags = ex.sets.map((s) => !s.id);
@@ -941,15 +936,6 @@ export default function SettingsPage() {
                 </div>
               );
             })}
-
-            {/* メモ */}
-            <textarea
-              value={ex.memo}
-              onChange={(e) => updateExercise(exIdx, "memo", e.target.value)}
-              placeholder="メモ"
-              rows={2}
-              className="w-full bg-gray-200 rounded-xl px-3 py-2 text-xs resize-none outline-none placeholder-gray-500"
-            />
           </div>
         </div>
         );

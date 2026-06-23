@@ -403,30 +403,46 @@ export async function getLastActualRepsForSet(
   return matching.length > 0 ? matching[0].actual_reps : null;
 }
 
-// 指定種目の「日付ごとのトップセットの実レップ - 予定レップ」を新しい順で返す。
-// トップセットの判定は set_number が最大のもの。
-export async function getTopSetDeltaHistory(
+// 指定セットの「最後に記録された実重量と実レップ」を返す。
+// 履歴がなければ null。メインのセット行 "前回 Xkg ×Y" 表示で使う。
+export async function getLastActualForSet(
   exerciseId: string,
-): Promise<{ date: string; delta: number }[]> {
+  setId: string,
+): Promise<{ weight: number; reps: number } | null> {
   const db = await getDB();
   const logs = await db.getAllFromIndex("set_logs", "by_exercise", exerciseId);
-  const byDate = new Map<
-    string,
-    { setNumber: number; planned: number; actual: number }
-  >();
-  for (const log of logs) {
-    const date = log.performed_at.slice(0, 10);
-    const cur = byDate.get(date);
-    if (!cur || log.set_number > cur.setNumber) {
-      byDate.set(date, {
-        setNumber: log.set_number,
-        planned: log.planned_reps,
-        actual: log.actual_reps,
-      });
+  const matching = logs
+    .filter((l) => l.set_id === setId)
+    .sort((a, b) => (a.performed_at < b.performed_at ? 1 : -1));
+  if (matching.length === 0) return null;
+  const last = matching[0];
+  return { weight: last.actual_weight, reps: last.actual_reps };
+}
+
+// 指定種目の「全セットの actual_weight が同じ値で記録された日」を抽出し、
+// その揃った重量の distinct 値数 - 1 を返す（初期値はカウントしない）。
+// 例: セッション履歴 10/10/10, 20/20/20, 30/30/30 → distinct {10,20,30} → 2
+// バックオフ＝TOP に揃った重量に新しく到達するたびに +1 されるイメージ。
+export async function getEqualWeightMilestones(
+  exerciseId: string,
+): Promise<number> {
+  const db = await getDB();
+  const logs = await db.getAllFromIndex("set_logs", "by_exercise", exerciseId);
+  // 日付ごとに log を集める（同日複数セッションは同一トレ扱い）
+  const byDate = new Map<string, typeof logs>();
+  for (const l of logs) {
+    const key = l.performed_at.slice(0, 10);
+    if (!byDate.has(key)) byDate.set(key, []);
+    byDate.get(key)!.push(l);
+  }
+  const equalWeights = new Set<number>();
+  for (const sessionLogs of byDate.values()) {
+    if (sessionLogs.length < 2) continue; // 1 セットだけなら "揃った" の対象外
+    const weights = sessionLogs.map((l) => l.actual_weight);
+    if (weights.every((w) => w === weights[0])) {
+      equalWeights.add(weights[0]);
     }
   }
-  return [...byDate.entries()]
-    .map(([date, { planned, actual }]) => ({ date, delta: actual - planned }))
-    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  return Math.max(0, equalWeights.size - 1);
 }
 

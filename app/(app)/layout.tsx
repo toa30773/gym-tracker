@@ -1,10 +1,12 @@
 import BottomNav from "@/components/BottomNav";
 import SyncBootstrap from "@/components/SyncBootstrap";
+import LaunchRedirect from "@/components/LaunchRedirect";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col h-full">
       <SyncBootstrap />
+      <LaunchRedirect />
       <main className="flex-1 overflow-y-auto">
         {children}
       </main>
