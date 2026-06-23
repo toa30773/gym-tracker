@@ -78,20 +78,16 @@ interface MenuData {
 type PickerTarget = {
   exIdx: number;
   setIdx: number;
-  field: "weight" | "reps" | "body_part" | "ratio";
+  field: "weight" | "reps" | "body_part";
 } | null;
 
-// 50%〜100% を 5% 刻みで（100% = ストレートセット）
-const RATIO_PCT_OPTIONS = Array.from({ length: 11 }, (_, i) => 50 + i * 5);
-
-// 新規セットのデフォルト。デフォルトはストレートセット（=トップと同重量、ratio=1.0）。
-// バックオフ運用の人は設定画面の % ピッカーで個別に変更する。
-const defaultSet = (n: number, ratio: number | null = 1.0): SetData => ({
+// 新規セットのデフォルト。全セットとも直接 kg 指定（backoff_ratio は使わない）。
+const defaultSet = (n: number): SetData => ({
   set_number: n,
   weight: 20,
   reps: 10,
   machine_height: "",
-  backoff_ratio: ratio,
+  backoff_ratio: null,
 });
 
 const defaultExercise = (): ExerciseData => ({
@@ -100,8 +96,7 @@ const defaultExercise = (): ExerciseData => ({
   memo: "",
   weight_step: 2.5,
   is_assisted: false,
-  // セットが1つのとき = それがトップ。比率は null（直接重量指定）
-  sets: [defaultSet(1, null)],
+  sets: [defaultSet(1)],
 });
 
 const defaultMenu = (idx: number): MenuData => ({
@@ -117,6 +112,10 @@ export default function SettingsPage() {
   const [currentIdx, setCurrentIdx] = useState(0);
   const [menuData, setMenuData] = useState<MenuData>(defaultMenu(0));
   const [picker, setPicker] = useState<PickerTarget>(null);
+  // バックオフ weight ピッカーで「全バックオフに同期」する状態。
+  // ON = 1セット触れば他バックオフも同値（規定）／OFF = このセットだけ手入力。
+  // picker が開く / 閉じる / 対象が変わるたびに ON に戻す。
+  const [syncBackoffs, setSyncBackoffs] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [showDaySelector, setShowDaySelector] = useState(false);
@@ -130,6 +129,10 @@ export default function SettingsPage() {
   useEffect(() => {
     setActionBarSlot(document.getElementById("app-action-bar-slot"));
   }, []);
+  // ピッカーが開く / 対象が変わるたびに「同期」既定値 ON に戻す
+  useEffect(() => {
+    setSyncBackoffs(true);
+  }, [picker?.exIdx, picker?.setIdx, picker?.field]);
   const [deleting, setDeleting] = useState(false);
   // 現在の menuData が直近 load した内容と一致するかを判定するための基準値（JSON 文字列）
   const [baseline, setBaseline] = useState<string>(() =>
@@ -171,7 +174,8 @@ export default function SettingsPage() {
                   weight: s.weight,
                   reps: s.reps,
                   machine_height: s.machine_height || "",
-                  backoff_ratio: s.backoff_ratio ?? null,
+                  // 旧データの ratio は読み捨て、null に正規化（実際の kg は s.weight に入っている）
+                  backoff_ratio: null,
                 })),
             }))
           : [defaultExercise()],
@@ -320,7 +324,7 @@ export default function SettingsPage() {
         memo: "",
         weight_step: 2.5,
         is_assisted: false,
-        sets: [defaultSet(1, null)],
+        sets: [defaultSet(1)],
       };
       const exercises = [...prev.exercises];
       exercises.splice(exIdx + 1, 0, copy);
@@ -352,8 +356,7 @@ export default function SettingsPage() {
         weight: s.weight,
         reps: s.reps,
         machine_height: s.machine_height || "",
-        backoff_ratio:
-          i === sortedSets.length - 1 ? null : s.backoff_ratio ?? null,
+        backoff_ratio: null,
       })),
     };
     setMenuData((prev) => ({
@@ -404,39 +407,42 @@ export default function SettingsPage() {
       ex.sets = list.map((s, i) => ({
         ...s,
         set_number: i + 1,
-        // 末尾 = トップ なので、削除で末尾が変わる可能性があり ratio を正規化する
-        backoff_ratio: i === list.length - 1 ? null : s.backoff_ratio ?? 1.0,
+        backoff_ratio: null,
       }));
       exercises[exIdx] = ex;
       return { ...prev, exercises };
     });
   }
 
-  // 末尾 = トップを保つため、新規セットは「末尾の1つ前」に挿入し、デフォルト 85% バックオフにする。
-  // セット番号は全体を振り直す。
+  // 末尾 = トップを保つため、新規セットは「末尾の1つ前」に挿入する。
+  // kg の初期値は「既存バックオフがあればその値」（バックオフ群を揃える運用に合わせる）、
+  // バックオフがまだ無ければ TOP の kg を複製する。
   function addSet(exIdx: number) {
     setMenuData((prev) => {
       const exercises = [...prev.exercises];
       const ex = { ...exercises[exIdx] };
       const insertAt = Math.max(0, ex.sets.length - 1);
       const top = ex.sets[ex.sets.length - 1];
-      // 椅子の高さは「種目に1つ」なので、新規セットを sets[0] に押し出しても
-      // ユーザー入力済みの値が画面から消えないように引き継ぐ。
+      const existingBackoff = ex.sets.length > 1 ? ex.sets[0] : null;
       const sharedHeight = ex.sets[0]?.machine_height || "";
+      const defaultWeight = existingBackoff
+        ? existingBackoff.weight
+        : top
+        ? top.weight
+        : 20;
       const newSet: SetData = {
         set_number: 0,
-        weight: top ? top.weight : 20,
+        weight: defaultWeight,
         reps: top ? top.reps : 10,
         machine_height: sharedHeight,
-        backoff_ratio: 1.0,
+        backoff_ratio: null,
       };
       const list = [...ex.sets];
       list.splice(insertAt, 0, newSet);
       ex.sets = list.map((s, i) => ({
         ...s,
         set_number: i + 1,
-        // 最終セット（=トップ）は ratio を null に正規化
-        backoff_ratio: i === list.length - 1 ? null : s.backoff_ratio,
+        backoff_ratio: null,
       }));
       exercises[exIdx] = ex;
       return { ...prev, exercises };
@@ -455,11 +461,34 @@ export default function SettingsPage() {
     });
   }
 
-  function updateSet(exIdx: number, setIdx: number, field: keyof SetData, val: number | string) {
+  // バックオフの重量を 1 つ変えたら、他の全バックオフも同じ値に同期する（デフォルト）。
+  // TOP（最終セット）は独立。reps と椅子の高さは同期しない。
+  // ピッカー側で「全バックオフに同期」を OFF にしているときは solo=true で渡され、
+  // 該当セットだけ更新する（ピラミッド型など個別調整したい時用）。
+  function updateSet(
+    exIdx: number,
+    setIdx: number,
+    field: keyof SetData,
+    val: number | string,
+    options: { solo?: boolean } = {},
+  ) {
     setMenuData((prev) => {
       const exercises = [...prev.exercises];
       const sets = [...exercises[exIdx].sets];
-      sets[setIdx] = { ...sets[setIdx], [field]: val };
+      const isTop = setIdx === sets.length - 1;
+      if (
+        field === "weight" &&
+        !isTop &&
+        sets.length > 2 &&
+        !options.solo
+      ) {
+        // 自分を含むすべてのバックオフを val に揃える
+        for (let i = 0; i < sets.length - 1; i++) {
+          sets[i] = { ...sets[i], weight: val as number };
+        }
+      } else {
+        sets[setIdx] = { ...sets[setIdx], [field]: val };
+      }
       exercises[exIdx] = { ...exercises[exIdx], sets };
       return { ...prev, exercises };
     });
@@ -555,30 +584,19 @@ export default function SettingsPage() {
         // 椅子の高さは set[0] のみUIで編集するので、全セットに伝播させる
         const sharedMachineHeight = ex.sets[0]?.machine_height || null;
 
-        // トップ重量を確定（=最終セット）→ バックオフは ratio で計算
-        const topWeight = ex.sets[ex.sets.length - 1]?.weight ?? 0;
-
+        // セットは「直接 kg 指定」のみ。backoff_ratio は使わず常に null で書き戻す。
         // セット書き込みは IDB の独立行なので並列化して良い。
-        // 同一種目内で putExercise → sets は順序保ったまま、sets だけ Promise.all で束ねる。
-        const setRecords: WorkoutSet[] = ex.sets.map((s, setIdx) => {
-          const isLastSet = setIdx === ex.sets.length - 1;
-          const ratio = isLastSet ? null : s.backoff_ratio;
-          const computedWeight =
-            ratio !== null && ratio !== undefined
-              ? Math.max(0, roundToStep(topWeight * ratio, ex.weight_step))
-              : s.weight;
-          return {
-            id: s.id || newId(),
-            exercise_id: exerciseRecord.id,
-            user_id: userId,
-            set_number: s.set_number,
-            weight: computedWeight,
-            reps: s.reps,
-            machine_height: sharedMachineHeight,
-            memo: ex.memo || null,
-            backoff_ratio: ratio,
-          };
-        });
+        const setRecords: WorkoutSet[] = ex.sets.map((s) => ({
+          id: s.id || newId(),
+          exercise_id: exerciseRecord.id,
+          user_id: userId,
+          set_number: s.set_number,
+          weight: s.weight,
+          reps: s.reps,
+          machine_height: sharedMachineHeight,
+          memo: ex.memo || null,
+          backoff_ratio: null,
+        }));
         const isNewSetFlags = ex.sets.map((s) => !s.id);
         await Promise.all(
           setRecords.map((setRecord, idx) =>
@@ -874,15 +892,10 @@ export default function SettingsPage() {
               </label>
             </div>
 
-            {/* セットリスト：末尾がトップ、それ以外は「トップの%」で表示・編集 */}
+            {/* セットリスト：末尾 = TOP、それ以外 = バックオフ。
+                すべて kg を直接入力。バックオフは編集すると他のバックオフも同期される。 */}
             {ex.sets.map((s, setIdx) => {
               const isTop = setIdx === ex.sets.length - 1;
-              const topWeight = ex.sets[ex.sets.length - 1]?.weight ?? 0;
-              const ratio = s.backoff_ratio;
-              const computedWeight =
-                !isTop && ratio !== null && ratio !== undefined
-                  ? roundToStep(topWeight * ratio, ex.weight_step)
-                  : s.weight;
               return (
                 <div key={setIdx} className="flex items-center gap-1.5 mb-2 pl-4">
                   <div
@@ -892,31 +905,15 @@ export default function SettingsPage() {
                   >
                     {s.set_number}
                   </div>
-                  {isTop ? (
-                    <>
-                      <span className="text-[10px] font-bold text-gray-700 px-1">TOP</span>
-                      <button
-                        className="flex-1 bg-gray-200 rounded-full py-1.5 text-xs text-center"
-                        onClick={() => setPicker({ exIdx, setIdx, field: "weight" })}
-                      >
-                        {s.weight}kg
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        className="bg-gray-200 rounded-full py-1.5 px-3 text-xs text-center"
-                        onClick={() => setPicker({ exIdx, setIdx, field: "ratio" })}
-                      >
-                        {ratio !== null && ratio !== undefined
-                          ? `${Math.round(ratio * 100)}%`
-                          : "—%"}
-                      </button>
-                      <span className="flex-1 text-[10px] text-gray-500 text-center">
-                        {computedWeight}kg
-                      </span>
-                    </>
+                  {isTop && (
+                    <span className="text-[10px] font-bold text-gray-700 px-1">TOP</span>
                   )}
+                  <button
+                    className="flex-1 bg-gray-200 rounded-full py-1.5 text-xs text-center"
+                    onClick={() => setPicker({ exIdx, setIdx, field: "weight" })}
+                  >
+                    {s.weight}kg
+                  </button>
                   <button
                     className="flex-1 bg-gray-200 rounded-full py-1.5 text-xs text-center"
                     onClick={() => setPicker({ exIdx, setIdx, field: "reps" })}
@@ -1035,10 +1032,22 @@ export default function SettingsPage() {
           actionBarSlot,
         )}
 
-      {/* 重量／レップ／部位／比率 入力モーダル
+      {/* 重量／レップ／部位 入力モーダル
           weight だけテンキー入力＋±（マシン固有の不規則ステップに対応）。
           他は従来通り ScrollPicker。 */}
-      {picker && (
+      {picker && (() => {
+        const isTopPicker =
+          picker.field === "weight" &&
+          picker.setIdx ===
+            menuData.exercises[picker.exIdx].sets.length - 1;
+        const showSyncToggle =
+          picker.field === "weight" &&
+          !isTopPicker &&
+          menuData.exercises[picker.exIdx].sets.length > 2;
+        // 同期トグルが見えていて OFF のときだけ solo=true で渡す。
+        // トグル自体が出ていない場合（TOP / バックオフ1個のみ）は通常更新で問題なし。
+        const solo = showSyncToggle && !syncBackoffs;
+        return (
         <div
           className="fixed inset-0 bg-black/40 z-50 flex items-end"
           onClick={() => setPicker(null)}
@@ -1049,13 +1058,27 @@ export default function SettingsPage() {
           >
             <p className="text-center text-xs font-bold mb-3">
               {picker.field === "weight"
-                ? "トップ重量を入力（kg）"
+                ? isTopPicker
+                  ? "TOP の重量を入力（kg）"
+                  : "バックオフの重量を入力（kg）"
                 : picker.field === "reps"
                 ? "レップ数を選択"
-                : picker.field === "ratio"
-                ? "トップに対する％を選択"
                 : "部位を選択"}
             </p>
+            {showSyncToggle && (
+              <label className="flex items-center justify-center gap-2 mb-3 text-[11px] text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={syncBackoffs}
+                  onChange={(e) => setSyncBackoffs(e.target.checked)}
+                  className="accent-gray-800"
+                />
+                全バックオフに同期
+                <span className="text-[10px] text-gray-400">
+                  （OFFでこのセットだけ）
+                </span>
+              </label>
+            )}
             {picker.field === "weight" ? (() => {
               const ex = menuData.exercises[picker.exIdx];
               const set = ex.sets[picker.setIdx];
@@ -1069,6 +1092,7 @@ export default function SettingsPage() {
                         picker.setIdx,
                         "weight",
                         Math.max(0, roundToStep(set.weight - step, step)),
+                        { solo },
                       )
                     }
                     className="w-12 h-12 bg-gray-200 rounded-full text-2xl font-bold leading-none"
@@ -1087,12 +1111,12 @@ export default function SettingsPage() {
                     onChange={(e) => {
                       const str = e.target.value;
                       if (str === "") {
-                        updateSet(picker.exIdx, picker.setIdx, "weight", 0);
+                        updateSet(picker.exIdx, picker.setIdx, "weight", 0, { solo });
                         return;
                       }
                       const v = parseFloat(str);
                       if (Number.isFinite(v) && v >= 0) {
-                        updateSet(picker.exIdx, picker.setIdx, "weight", v);
+                        updateSet(picker.exIdx, picker.setIdx, "weight", v, { solo });
                       }
                     }}
                     onFocus={(e) => e.currentTarget.select()}
@@ -1106,6 +1130,7 @@ export default function SettingsPage() {
                         picker.setIdx,
                         "weight",
                         roundToStep(set.weight + step, step),
+                        { solo },
                       )
                     }
                     className="w-12 h-12 bg-gray-200 rounded-full text-2xl font-bold leading-none"
@@ -1116,33 +1141,15 @@ export default function SettingsPage() {
               );
             })() : (
               <ScrollPicker
-                items={
-                  picker.field === "reps"
-                    ? REPS
-                    : picker.field === "ratio"
-                    ? RATIO_PCT_OPTIONS
-                    : BODY_PARTS
-                }
+                items={picker.field === "reps" ? REPS : BODY_PARTS}
                 value={
                   picker.field === "reps"
                     ? menuData.exercises[picker.exIdx].sets[picker.setIdx].reps
-                    : picker.field === "ratio"
-                    ? Math.round(
-                        ((menuData.exercises[picker.exIdx].sets[picker.setIdx]
-                          .backoff_ratio ?? 1.0) as number) * 100,
-                      )
                     : menuData.exercises[picker.exIdx].body_part
                 }
                 onChange={(val) => {
                   if (picker.field === "body_part") {
                     updateExercise(picker.exIdx, "body_part", String(val));
-                  } else if (picker.field === "ratio") {
-                    updateSet(
-                      picker.exIdx,
-                      picker.setIdx,
-                      "backoff_ratio",
-                      (val as number) / 100,
-                    );
                   } else {
                     updateSet(picker.exIdx, picker.setIdx, picker.field, val as number);
                   }
@@ -1157,7 +1164,8 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* 未保存ガード確認モーダル */}
       {pendingProceed && (

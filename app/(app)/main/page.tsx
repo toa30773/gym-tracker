@@ -697,10 +697,9 @@ export default function MainPage() {
                               )}
                             </div>
 
-                            {/* セットリスト（末尾=トップ、その他=バックオフ） */}
+                            {/* セットリスト（末尾=TOP、その他=バックオフ） */}
                             {ex.sets.map((s: WorkoutSet, sIdx) => {
                               const isTop = sIdx === ex.sets.length - 1;
-                              const ratio = s.backoff_ratio;
                               return (
                                 <div key={s.id} className="flex items-center gap-2 mb-1.5 pl-4">
                                   <div
@@ -714,13 +713,9 @@ export default function MainPage() {
                                   </div>
                                   <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
                                     {formatWeight(s.weight, ex.is_assisted)}
-                                    {isTop ? (
+                                    {isTop && (
                                       <span className="ml-1 text-[9px] text-gray-700 font-bold">TOP</span>
-                                    ) : ratio !== null && ratio !== undefined && ratio < 1 ? (
-                                      <span className="ml-1 text-[9px] text-gray-500">
-                                        ({Math.round(ratio * 100)}%)
-                                      </span>
-                                    ) : null}
+                                    )}
                                   </div>
                                   <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
                                     {s.reps}回
@@ -836,13 +831,9 @@ export default function MainPage() {
                         {row.previous_actual_reps - row.planned_reps})
                       </span>
                     )}
-                  {isTop ? (
+                  {isTop && (
                     <span className="text-[9px] font-bold text-gray-800 ml-auto">TOP（限界まで）</span>
-                  ) : row.backoff_ratio !== null && row.backoff_ratio !== undefined && row.backoff_ratio < 1 ? (
-                    <span className="text-[9px] text-gray-500 ml-auto">
-                      バックオフ {Math.round(row.backoff_ratio * 100)}%
-                    </span>
-                  ) : null}
+                  )}
                 </div>
                 <div className="flex items-center gap-1.5 pl-7">
                   {/* 実重量 */}
