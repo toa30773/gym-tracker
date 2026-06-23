@@ -20,6 +20,7 @@ import type {
   WorkoutSet,
 } from "@/lib/types";
 import { roundToStep, formatWeight } from "@/lib/types";
+import { diffDaysLocal, parseYmdLocal, ymdLocal } from "@/lib/date";
 
 interface ActualRow {
   set_id: string;
@@ -87,9 +88,10 @@ function isMenuActiveToday(menu: Menu): boolean {
   // 間隔モード（起点曜日 + 間隔）：start_date を基準に N 日おきで判定。
   // 起点曜日の合致は条件にしない（毎週その曜日に活性化、にならない）。
   if (menu.interval_days && menu.start_date) {
-    const start = new Date(menu.start_date);
-    const diffMs = today.setHours(0, 0, 0, 0) - start.setHours(0, 0, 0, 0);
-    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+    // start_date は "YYYY-MM-DD" で保存されているのでローカル 0 時で復元する。
+    // new Date(string) は UTC 解釈になり JST だと 09:00 から始まって境界バグの元になる。
+    const start = parseYmdLocal(menu.start_date);
+    const diffDays = diffDaysLocal(today, start);
     if (diffDays >= 0 && diffDays % menu.interval_days === 0) return true;
     return false;
   }
@@ -101,8 +103,7 @@ function isMenuActiveToday(menu: Menu): boolean {
 }
 
 function todayKey(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return ymdLocal(new Date());
 }
 
 export default function MainPage() {
@@ -614,9 +615,14 @@ export default function MainPage() {
   return (
     <div className="pb-2">
       {/* ヘッダー */}
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
-        <span className="text-sm font-bold">今日の筋トレメニュー</span>
-        <div className="bg-gray-200 rounded px-3 py-1 text-xs">{menu.name}</div>
+      <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2">
+        <span className="text-sm font-bold whitespace-nowrap flex-shrink-0">今日の筋トレメニュー</span>
+        <div
+          className="bg-gray-200 rounded px-3 py-1 text-xs truncate max-w-[55%]"
+          title={menu.name}
+        >
+          {menu.name}
+        </div>
       </div>
       <div className="h-px bg-black mx-4 mb-3" />
 

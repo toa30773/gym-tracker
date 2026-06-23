@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import {
   getMenusWithExercisesForUser,
@@ -21,6 +21,7 @@ import { registerGuard, requestNavigation } from "@/lib/nav-guard";
 import ScrollPicker from "@/components/ScrollPicker";
 import type { Menu, Exercise, WorkoutSet, MenuWithExercises } from "@/lib/types";
 import { WEIGHT_STEPS, roundToStep } from "@/lib/types";
+import { ymdLocal } from "@/lib/date";
 
 const BODY_PARTS = ["胸", "背中", "肩", "腕", "脚", "腹", "体幹", "全身"];
 const DAYS = ["月", "火", "水", "木", "金", "土", "日"];
@@ -30,7 +31,7 @@ const DAY_INDEX_BY_LABEL: Record<string, number> = {
   日: 0, 月: 1, 火: 2, 水: 3, 木: 4, 金: 5, 土: 6,
 };
 
-// 起点曜日に該当する「今日以降の最初の日付」を ISO (YYYY-MM-DD) で返す
+// 起点曜日に該当する「今日以降の最初の日付」を YYYY-MM-DD (ローカル) で返す
 function nextDateOfDay(label: string): string {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -39,7 +40,8 @@ function nextDateOfDay(label: string): string {
   const diff = (targetIdx - todayIdx + 7) % 7;
   const target = new Date(today);
   target.setDate(today.getDate() + diff);
-  return target.toISOString().slice(0, 10);
+  // toISOString() は UTC 基準で 1 日ずれるので、ローカル日付で組み立てる
+  return ymdLocal(target);
 }
 const REPS = Array.from({ length: 30 }, (_, i) => i + 1);
 const MAX_MENUS = 10;
@@ -418,12 +420,14 @@ export default function SettingsPage() {
       const ex = { ...exercises[exIdx] };
       const insertAt = Math.max(0, ex.sets.length - 1);
       const top = ex.sets[ex.sets.length - 1];
-      // 追加前にトップが ratio を持っていれば独立扱いに直す（最終セットだけがトップなので）
+      // 椅子の高さは「種目に1つ」なので、新規セットを sets[0] に押し出しても
+      // ユーザー入力済みの値が画面から消えないように引き継ぐ。
+      const sharedHeight = ex.sets[0]?.machine_height || "";
       const newSet: SetData = {
         set_number: 0,
         weight: top ? top.weight : 20,
         reps: top ? top.reps : 10,
-        machine_height: "",
+        machine_height: sharedHeight,
         backoff_ratio: 1.0,
       };
       const list = [...ex.sets];
@@ -463,7 +467,11 @@ export default function SettingsPage() {
 
   // 未保存判定。baseline は最後に load / 初期化された snapshot。menuData が編集される
   // たびに JSON が変わるので、不一致 = 未保存編集あり。
-  const isDirty = JSON.stringify(menuData) !== baseline;
+  // useMemo で menuData / baseline が変わった時だけ再計算（picker トグル等の再描画では走らない）。
+  const isDirty = useMemo(
+    () => JSON.stringify(menuData) !== baseline,
+    [menuData, baseline],
+  );
 
   // ブラウザのタブを閉じる／リロード時の警告（SPA 内遷移はこれでは捕まらない）
   useEffect(() => {
@@ -550,18 +558,16 @@ export default function SettingsPage() {
         // トップ重量を確定（=最終セット）→ バックオフは ratio で計算
         const topWeight = ex.sets[ex.sets.length - 1]?.weight ?? 0;
 
-        const keepSetIds: string[] = [];
-        for (let setIdx = 0; setIdx < ex.sets.length; setIdx++) {
-          const s = ex.sets[setIdx];
+        // セット書き込みは IDB の独立行なので並列化して良い。
+        // 同一種目内で putExercise → sets は順序保ったまま、sets だけ Promise.all で束ねる。
+        const setRecords: WorkoutSet[] = ex.sets.map((s, setIdx) => {
           const isLastSet = setIdx === ex.sets.length - 1;
           const ratio = isLastSet ? null : s.backoff_ratio;
-          // 比率があるバックオフは保存時に実重量を計算（=表示は既存ロジックでそのまま使える）
           const computedWeight =
             ratio !== null && ratio !== undefined
               ? Math.max(0, roundToStep(topWeight * ratio, ex.weight_step))
               : s.weight;
-          const isNewSet = !s.id;
-          const setRecord: WorkoutSet = {
+          return {
             id: s.id || newId(),
             exercise_id: exerciseRecord.id,
             user_id: userId,
@@ -572,34 +578,39 @@ export default function SettingsPage() {
             memo: ex.memo || null,
             backoff_ratio: ratio,
           };
-          if (isNewSet) {
-            await putSet(setRecord, { enqueue: true });
-          } else {
-            await updateSetLocal(setRecord);
-          }
-          keepSetIds.push(setRecord.id);
-        }
+        });
+        const isNewSetFlags = ex.sets.map((s) => !s.id);
+        await Promise.all(
+          setRecords.map((setRecord, idx) =>
+            isNewSetFlags[idx]
+              ? putSet(setRecord, { enqueue: true })
+              : updateSetLocal(setRecord),
+          ),
+        );
+        const keepSetIds = setRecords.map((r) => r.id);
 
         // 削除されたセットを片付ける（既存種目の場合のみ）
         if (!isNewExercise && existingBeforeSave) {
           const before = existingBeforeSave.exercises.find((e) => e.id === ex.id);
           if (before) {
-            for (const oldSet of before.sets) {
-              if (!keepSetIds.includes(oldSet.id)) {
-                await deleteSetLocal(oldSet.id, userId);
-              }
-            }
+            const toDelete = before.sets.filter(
+              (oldSet) => !keepSetIds.includes(oldSet.id),
+            );
+            await Promise.all(
+              toDelete.map((oldSet) => deleteSetLocal(oldSet.id, userId)),
+            );
           }
         }
       }
 
       // 削除された種目を片付ける
       if (existingBeforeSave) {
-        for (const oldEx of existingBeforeSave.exercises) {
-          if (!keepExerciseIds.includes(oldEx.id)) {
-            await deleteExerciseLocal(oldEx.id, userId);
-          }
-        }
+        const toDelete = existingBeforeSave.exercises.filter(
+          (oldEx) => !keepExerciseIds.includes(oldEx.id),
+        );
+        await Promise.all(
+          toDelete.map((oldEx) => deleteExerciseLocal(oldEx.id, userId)),
+        );
       }
     } catch (e) {
       console.error("保存に失敗しました", e);
