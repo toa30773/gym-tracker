@@ -68,6 +68,12 @@ export interface MenuWithExercises extends Menu {
 
 export const WEIGHT_STEPS = [0.25, 0.5, 1, 1.25, 2.5, 5, 7, 10] as const;
 
+// メニュー横断で「同じ種目」と判定するための正規化。
+// trim + NFKC で前後空白と全角/半角差を吸収する。空文字はマッチ対象外として呼び出し側で除外する。
+export function normalizeExerciseName(name: string): string {
+  return name.trim().normalize("NFKC");
+}
+
 function stepDecimals(step: number): number {
   const s = step.toString();
   const i = s.indexOf(".");

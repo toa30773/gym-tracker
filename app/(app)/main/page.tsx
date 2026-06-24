@@ -6,6 +6,7 @@ import {
   getEqualWeightMilestones,
   getLastActualForSet,
   putSetLog,
+  updateSet as updateSetLocal,
   newId,
   nowIso,
 } from "@/lib/local-db";
@@ -16,8 +17,13 @@ import type {
   ExerciseWithSets,
   WorkoutSet,
 } from "@/lib/types";
-import { roundToStep, formatWeight } from "@/lib/types";
+import { roundToStep, formatWeight, normalizeExerciseName } from "@/lib/types";
 import { diffDaysLocal, parseYmdLocal, ymdLocal } from "@/lib/date";
+import CrossMenuSyncDialog, {
+  type ChangedSet,
+  type ExerciseChangeEntry,
+  type SyncTargetMenu,
+} from "@/components/CrossMenuSyncDialog";
 
 interface ActualRow {
   set_id: string;
@@ -90,6 +96,14 @@ export default function MainPage() {
   const [actualsModal, setActualsModal] = useState<ActualsModal | null>(null);
   const [savingActuals, setSavingActuals] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // 記録保存時の反映確認ダイアログ。重量変更があり、同名種目を持つ他メニューが存在する場合に表示。
+  // logs と自メニューの計画値更新は既に完了している状態でこのダイアログが開く。
+  // 「決定」で選択された他メニューへ反映、「キャンセル」は何もせず閉じる（自メニュー更新は既済）。
+  const [syncDialog, setSyncDialog] = useState<{
+    entries: ExerciseChangeEntry[];
+    changedSets: ChangedSet[];
+    normalizedName: string;
+  } | null>(null);
   const swipeStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
   const lastDateRef = useRef<string>(todayKey());
 
@@ -283,6 +297,7 @@ export default function MainPage() {
       }
 
       const performedAt = nowIso();
+      // Step 1: set_logs 書き込み（履歴は常に残す）
       try {
         await Promise.all(
           actualsModal.rows.map((r) =>
@@ -308,6 +323,26 @@ export default function MainPage() {
         );
         return;
       }
+
+      // Step 2: 重量が実績≠予定のセットを抽出し、自メニューの計画値を実績値に更新（A案）。
+      // レップ数は同期しない（前回値として表示するのみ）。
+      const weightChangedRows = actualsModal.rows.filter(
+        (r) => r.actual_weight !== r.planned_weight,
+      );
+      const sourceExercise = menu?.exercises.find(
+        (e) => e.id === actualsModal.exerciseId,
+      );
+      if (weightChangedRows.length > 0 && sourceExercise) {
+        for (const row of weightChangedRows) {
+          const targetSet = sourceExercise.sets.find((s) => s.id === row.set_id);
+          if (!targetSet) continue;
+          await updateSetLocal({
+            ...targetSet,
+            weight: row.actual_weight,
+          });
+        }
+      }
+
       runSync().catch(() => {});
       addCompleted(actualsModal.exerciseId);
 
@@ -326,10 +361,113 @@ export default function MainPage() {
         return next;
       });
 
+      // Step 3: 同名種目を持つ他メニューを探し、あれば反映確認ダイアログを開く。
+      // ダイアログは自メニュー更新の後に開く（A案：自分は常に更新、他は選択）。
+      if (weightChangedRows.length > 0 && sourceExercise) {
+        const normalizedName = normalizeExerciseName(sourceExercise.name);
+        if (normalizedName) {
+          const sourceMenuId = sourceExercise.menu_id;
+          const allMenus = await getMenusWithExercisesForUser(userId);
+          const targetMenus: SyncTargetMenu[] = [];
+          for (const m of allMenus) {
+            if (m.id === sourceMenuId) continue;
+            const matchingEx = m.exercises.find(
+              (e) => normalizeExerciseName(e.name) === normalizedName,
+            );
+            if (!matchingEx) continue;
+            const currentByNumber: Record<number, { weight: number; reps: number }> = {};
+            for (const s of matchingEx.sets) {
+              currentByNumber[s.set_number] = { weight: s.weight, reps: s.reps };
+            }
+            // 初期チェック: 変更セットの set_number が存在し、target の現在重量 == 変更前の予定重量
+            let allMatch = true;
+            let hasAny = false;
+            for (const row of weightChangedRows) {
+              const cur = currentByNumber[row.set_number];
+              if (!cur) {
+                allMatch = false;
+                continue;
+              }
+              hasAny = true;
+              if (cur.weight !== row.planned_weight) allMatch = false;
+            }
+            targetMenus.push({
+              menu_id: m.id,
+              menu_name: m.name,
+              exercise_id: matchingEx.id,
+              current_by_number: currentByNumber,
+              initially_checked: hasAny && allMatch,
+            });
+          }
+          if (targetMenus.length > 0) {
+            const changedSets: ChangedSet[] = weightChangedRows.map((r) => ({
+              set_number: r.set_number,
+              old_weight: r.planned_weight,
+              new_weight: r.actual_weight,
+              old_reps: r.planned_reps,
+              new_reps: r.actual_reps,
+              weight_changed: true,
+              reps_changed: false,
+            }));
+            // ダイアログ表示中はモーダルは閉じる（背景）
+            setActualsModal(null);
+            setSyncDialog({
+              entries: [
+                {
+                  exercise_name: sourceExercise.name,
+                  changed_sets: changedSets,
+                  target_menus: targetMenus,
+                },
+              ],
+              changedSets,
+              normalizedName,
+            });
+            return;
+          }
+        }
+      }
+
       setActualsModal(null);
     } finally {
       setSavingActuals(false);
     }
+  }
+
+  // 反映確認ダイアログ「決定」: 選択された他メニューに対して同名種目の該当 set_number を上書き。
+  async function handleSyncConfirm(selectedByEntry: string[][]) {
+    if (!syncDialog) return;
+    const selectedMenuIds = selectedByEntry[0] ?? [];
+    const { entries, changedSets } = syncDialog;
+    const targets = entries[0].target_menus;
+    setSyncDialog(null);
+    if (selectedMenuIds.length === 0) return;
+    try {
+      const userId = await getCurrentUserId();
+      if (!userId) return;
+      // savedMenus 相当のスナップショットを再取得して target のセット ID を解決
+      const allMenus = await getMenusWithExercisesForUser(userId);
+      for (const target of targets) {
+        if (!selectedMenuIds.includes(target.menu_id)) continue;
+        const targetMenu = allMenus.find((m) => m.id === target.menu_id);
+        if (!targetMenu) continue;
+        const targetEx = targetMenu.exercises.find(
+          (e) => e.id === target.exercise_id,
+        );
+        if (!targetEx) continue;
+        for (const cs of changedSets) {
+          const ts = targetEx.sets.find((s) => s.set_number === cs.set_number);
+          if (!ts) continue;
+          await updateSetLocal({ ...ts, weight: cs.new_weight });
+        }
+      }
+      runSync().catch(() => {});
+    } catch (e) {
+      console.error("他メニューへの反映に失敗しました", e);
+    }
+  }
+
+  function handleSyncCancel() {
+    setSyncDialog(null);
   }
 
   function handleSwipeStart(e: React.TouchEvent, exId: string) {
@@ -671,6 +809,17 @@ export default function MainPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* クロスメニュー反映ダイアログ。記録保存で重量変更があった時に開く。
+          記録は重量のみ反映する（レップ数は反映しないので sync_reps=false）。 */}
+      {syncDialog && (
+        <CrossMenuSyncDialog
+          entries={syncDialog.entries}
+          sync_reps={false}
+          onConfirm={handleSyncConfirm}
+          onCancel={handleSyncCancel}
+        />
       )}
 
     </div>

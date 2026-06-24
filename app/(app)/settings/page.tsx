@@ -19,8 +19,13 @@ import {
 import { getCurrentUserId, runSync, subscribeSync } from "@/lib/sync";
 import { registerGuard, requestNavigation } from "@/lib/nav-guard";
 import ScrollPicker from "@/components/ScrollPicker";
+import CrossMenuSyncDialog, {
+  type ChangedSet,
+  type ExerciseChangeEntry,
+  type SyncTargetMenu,
+} from "@/components/CrossMenuSyncDialog";
 import type { Menu, Exercise, WorkoutSet, MenuWithExercises } from "@/lib/types";
-import { WEIGHT_STEPS, roundToStep } from "@/lib/types";
+import { WEIGHT_STEPS, roundToStep, normalizeExerciseName } from "@/lib/types";
 import { ymdLocal } from "@/lib/date";
 
 const BODY_PARTS = ["胸", "背中", "肩", "腕", "脚", "腹", "体幹", "全身"];
@@ -138,6 +143,14 @@ export default function SettingsPage() {
   );
   // 未保存ガード：BottomNav で別ページへ遷移しようとした時にここに proceed が積まれる
   const [pendingProceed, setPendingProceed] = useState<(() => void) | null>(null);
+  // 反映確認ダイアログ。保存時に他メニューへ同期するかをユーザーに聞くために開く。
+  // onResolve は save() が返した Promise を解決する。決定で true、キャンセルで false。
+  const [syncDialog, setSyncDialog] = useState<{
+    entries: ExerciseChangeEntry[];
+    changedSetsByEntry: ChangedSet[][];
+    normalizedNames: string[];
+    onResolve: (saved: boolean) => void;
+  } | null>(null);
 
   const fetchMenus = useCallback(async () => {
     const userId = await getCurrentUserId();
@@ -519,7 +532,217 @@ export default function SettingsPage() {
     return () => registerGuard(null);
   }, [isDirty]);
 
-  async function save() {
+  // baseline と現 menuData を比較し、既存セットの weight/reps 変更を種目単位で抽出する。
+  // 新規メニュー / 新規種目 / 新規セットは差分対象外（id を持たないため）。
+  // 種目名が空のものは反映対象外。
+  function computeExerciseChanges(): {
+    exerciseName: string;
+    normalizedName: string;
+    changedSets: ChangedSet[];
+  }[] {
+    const base = JSON.parse(baseline) as MenuData;
+    const baselineByExId = new Map<string, ExerciseData>();
+    for (const ex of base.exercises) {
+      if (ex.id) baselineByExId.set(ex.id, ex);
+    }
+
+    const results: {
+      exerciseName: string;
+      normalizedName: string;
+      changedSets: ChangedSet[];
+    }[] = [];
+
+    for (const ex of menuData.exercises) {
+      if (!ex.id) continue;
+      const baseEx = baselineByExId.get(ex.id);
+      if (!baseEx) continue;
+      const name = ex.name.trim();
+      if (!name) continue;
+
+      const baseSetsByNumber = new Map<number, SetData>();
+      for (const s of baseEx.sets) baseSetsByNumber.set(s.set_number, s);
+
+      const changedSets: ChangedSet[] = [];
+      for (const s of ex.sets) {
+        if (!s.id) continue;
+        const baseS = baseSetsByNumber.get(s.set_number);
+        if (!baseS) continue;
+        const weightChanged = s.weight !== baseS.weight;
+        const repsChanged = s.reps !== baseS.reps;
+        if (!weightChanged && !repsChanged) continue;
+        changedSets.push({
+          set_number: s.set_number,
+          old_weight: baseS.weight,
+          new_weight: s.weight,
+          old_reps: baseS.reps,
+          new_reps: s.reps,
+          weight_changed: weightChanged,
+          reps_changed: repsChanged,
+        });
+      }
+
+      if (changedSets.length > 0) {
+        results.push({
+          exerciseName: name,
+          normalizedName: normalizeExerciseName(name),
+          changedSets,
+        });
+      }
+    }
+    return results;
+  }
+
+  // computeExerciseChanges の結果から、ダイアログ表示用のエントリを組み立てる。
+  // 各エントリには、他メニューの中で同名種目を持つ候補と、初期チェック状態を含める。
+  function buildSyncEntries(
+    changes: ReturnType<typeof computeExerciseChanges>,
+  ): {
+    entries: ExerciseChangeEntry[];
+    changedSetsByEntry: ChangedSet[][];
+    normalizedNames: string[];
+  } {
+    const otherMenus = savedMenus.filter((m) => m.id !== menuData.id);
+    const entries: ExerciseChangeEntry[] = [];
+    const changedSetsByEntry: ChangedSet[][] = [];
+    const normalizedNames: string[] = [];
+
+    for (const c of changes) {
+      const targetMenus: SyncTargetMenu[] = [];
+      for (const m of otherMenus) {
+        const matchingEx = m.exercises.find(
+          (e) => normalizeExerciseName(e.name) === c.normalizedName,
+        );
+        if (!matchingEx) continue;
+
+        const currentByNumber: Record<number, { weight: number; reps: number }> = {};
+        for (const s of matchingEx.sets) {
+          currentByNumber[s.set_number] = { weight: s.weight, reps: s.reps };
+        }
+
+        // 初期チェック: 全変更セットの set_number が target に存在し、かつ
+        // weight_changed の項目で target の現在重量 == source の旧重量、
+        // reps_changed の項目で target の現在 reps == source の旧 reps、を満たす場合。
+        let allMatch = true;
+        let hasAnyMatchingNumber = false;
+        for (const cs of c.changedSets) {
+          const cur = currentByNumber[cs.set_number];
+          if (!cur) {
+            allMatch = false;
+            continue;
+          }
+          hasAnyMatchingNumber = true;
+          if (cs.weight_changed && cur.weight !== cs.old_weight) allMatch = false;
+          if (cs.reps_changed && cur.reps !== cs.old_reps) allMatch = false;
+        }
+
+        targetMenus.push({
+          menu_id: m.id,
+          menu_name: m.name,
+          exercise_id: matchingEx.id,
+          current_by_number: currentByNumber,
+          initially_checked: hasAnyMatchingNumber && allMatch,
+        });
+      }
+
+      entries.push({
+        exercise_name: c.exerciseName,
+        changed_sets: c.changedSets,
+        target_menus: targetMenus,
+      });
+      changedSetsByEntry.push(c.changedSets);
+      normalizedNames.push(c.normalizedName);
+    }
+    return { entries, changedSetsByEntry, normalizedNames };
+  }
+
+  // 反映先メニューへ同名種目の該当 set_number セットを上書きする（設定は重量＋レップ両方）。
+  // savedMenus のスナップショットから対象セット ID を解決し、updateSetLocal で書き戻す。
+  async function applyCrossMenuSync(directives: {
+    targetMenuIds: string[];
+    changedSets: ChangedSet[];
+    normalizedName: string;
+  }[]) {
+    for (const dir of directives) {
+      for (const targetMenuId of dir.targetMenuIds) {
+        const targetMenu = savedMenus.find((m) => m.id === targetMenuId);
+        if (!targetMenu) continue;
+        const targetEx = targetMenu.exercises.find(
+          (e) => normalizeExerciseName(e.name) === dir.normalizedName,
+        );
+        if (!targetEx) continue;
+        for (const cs of dir.changedSets) {
+          const targetSet = targetEx.sets.find(
+            (s) => s.set_number === cs.set_number,
+          );
+          if (!targetSet) continue;
+          await updateSetLocal({
+            ...targetSet,
+            weight: cs.weight_changed ? cs.new_weight : targetSet.weight,
+            reps: cs.reps_changed ? cs.new_reps : targetSet.reps,
+          });
+        }
+      }
+    }
+  }
+
+  // 同期確認ダイアログを介してユーザーが「決定」を押した時の処理。
+  async function handleSyncConfirm(selectedByEntry: string[][]) {
+    if (!syncDialog) return;
+    const { changedSetsByEntry, normalizedNames, onResolve } = syncDialog;
+    const directives = selectedByEntry.map((menuIds, i) => ({
+      targetMenuIds: menuIds,
+      changedSets: changedSetsByEntry[i],
+      normalizedName: normalizedNames[i],
+    }));
+    setSyncDialog(null);
+    await persistAndSync(directives);
+    onResolve(true);
+  }
+
+  function handleSyncCancel() {
+    if (!syncDialog) return;
+    syncDialog.onResolve(false);
+    setSyncDialog(null);
+  }
+
+  // 保存ボタンから呼ばれるエントリ。新規メニュー or 差分なし or 同名種目を持つ他メニューなし
+  // のいずれかなら直接 persistAndSync()、そうでなければダイアログを開く。
+  // 返り値は「保存まで到達したか」。未保存ガードの "保存して移動" でキャンセル時に
+  // 遷移を止めるために使う。
+  async function save(): Promise<boolean> {
+    if (saving) return false;
+    if (!menuData.id) {
+      await persistAndSync([]);
+      return true;
+    }
+    const changes = computeExerciseChanges();
+    if (changes.length === 0) {
+      await persistAndSync([]);
+      return true;
+    }
+    const built = buildSyncEntries(changes);
+    const anyTarget = built.entries.some((e) => e.target_menus.length > 0);
+    if (!anyTarget) {
+      await persistAndSync([]);
+      return true;
+    }
+    return new Promise<boolean>((resolve) => {
+      setSyncDialog({
+        entries: built.entries,
+        changedSetsByEntry: built.changedSetsByEntry,
+        normalizedNames: built.normalizedNames,
+        onResolve: resolve,
+      });
+    });
+  }
+
+  async function persistAndSync(
+    crossMenuDirectives: {
+      targetMenuIds: string[];
+      changedSets: ChangedSet[];
+      normalizedName: string;
+    }[],
+  ) {
     setSaving(true);
     setMessage("");
     const userId = await getCurrentUserId();
@@ -624,6 +847,12 @@ export default function SettingsPage() {
         await Promise.all(
           toDelete.map((oldEx) => deleteExerciseLocal(oldEx.id, userId)),
         );
+      }
+
+      // 他メニューへの反映（設定は weight・reps 両方を同期）。
+      // crossMenuDirectives は save() で組み立てられた「種目ごとの反映先メニューID + 変更セット」。
+      if (crossMenuDirectives.length > 0) {
+        await applyCrossMenuSync(crossMenuDirectives);
       }
     } catch (e) {
       console.error("保存に失敗しました", e);
@@ -1172,8 +1401,9 @@ export default function SettingsPage() {
                 onClick={async () => {
                   const proceed = pendingProceed;
                   setPendingProceed(null);
-                  await save();
-                  proceed();
+                  // 同期ダイアログでキャンセルした場合は save() が false を返すので、その時は遷移しない
+                  const ok = await save();
+                  if (ok) proceed();
                 }}
                 className="py-2 bg-gray-800 text-white rounded-full text-xs font-bold"
               >
@@ -1309,6 +1539,17 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* クロスメニュー同期確認ダイアログ。保存時に変更内容と反映先候補をユーザーに見せる。
+          設定画面では重量とレップの両方を反映する。 */}
+      {syncDialog && (
+        <CrossMenuSyncDialog
+          entries={syncDialog.entries}
+          sync_reps={true}
+          onConfirm={handleSyncConfirm}
+          onCancel={handleSyncCancel}
+        />
       )}
     </div>
   );
