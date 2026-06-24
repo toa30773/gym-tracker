@@ -5,6 +5,10 @@ import { getAllExercisesForUser, getAllSetLogsForUser } from "@/lib/local-db";
 import { getCurrentUserId } from "@/lib/sync";
 import { formatWeight, bodyPartChipClass } from "@/lib/types";
 
+// 部位の表示順。設定画面の BODY_PARTS と揃える。
+// 未定義の部位はこの後ろに alphabetical で並べる。
+const BODY_PART_ORDER = ["胸", "背中", "肩", "腕", "脚", "腹", "体幹", "全身"];
+
 interface ExerciseInfo {
   id: string;
   name: string;
@@ -282,6 +286,26 @@ export default function WeightHistoryPage() {
     return dates.size;
   }, [histories]);
 
+  // 部位ごとにグループ化。BODY_PART_ORDER の順、未定義部位は末尾に名前順。
+  // 各グループ内は最新トレ日が新しい順（fetchHistory の sort をそのまま活かす）。
+  const grouped = useMemo(() => {
+    const byPart = new Map<string, ExerciseHistory[]>();
+    for (const h of histories) {
+      const part = h.info.body_part || "（未分類）";
+      if (!byPart.has(part)) byPart.set(part, []);
+      byPart.get(part)!.push(h);
+    }
+    const sortedParts = [...byPart.keys()].sort((a, b) => {
+      const ai = BODY_PART_ORDER.indexOf(a);
+      const bi = BODY_PART_ORDER.indexOf(b);
+      if (ai === -1 && bi === -1) return a.localeCompare(b);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+    return sortedParts.map((part) => ({ part, items: byPart.get(part)! }));
+  }, [histories]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-40 text-sm text-gray-500">
@@ -309,122 +333,130 @@ export default function WeightHistoryPage() {
       </div>
       <div className="h-px bg-gray-400 mx-4 mb-3" />
 
-      {histories.map((h) => {
-        const first = h.points[0];
-        const last = h.points[h.points.length - 1];
-        // 右上の変化値は「全セットが揃った日」だけを対象にする。
-        // 「更新回数」の定義と一致させ、揃ってない TOP の上下に振り回されないようにする。
-        const equalPoints = h.points.filter((p) => p.allEqual);
-        const firstEqual = equalPoints[0] ?? null;
-        const lastEqual = equalPoints[equalPoints.length - 1] ?? null;
-        const change =
-          firstEqual && lastEqual
-            ? h.info.is_assisted
-              ? firstEqual.topWeight - lastEqual.topWeight
-              : lastEqual.topWeight - firstEqual.topWeight
-            : null;
-        const isOpen = openId === h.info.id;
-        return (
-          <div key={h.info.id} className="px-4 py-3 border-b border-gray-200">
-            <div className="flex items-center gap-1.5 mb-1">
-              <span className={`inline-flex px-2 py-0.5 border rounded-full text-[11px] font-bold ${bodyPartChipClass(h.info.body_part)}`}>
-                {h.info.body_part}
-              </span>
-              <span className="text-sm font-bold truncate">{h.info.name}</span>
-              {h.info.is_assisted && (
-                <span className="ml-auto text-[11px] text-gray-600">
-                  アシスト(値小=高負荷)
-                </span>
-              )}
-            </div>
+      {grouped.map(({ part, items }) => (
+        <section key={part} className="mb-3">
+          {/* 部位見出し */}
+          <div className="px-4 mb-2">
+            <span className={`inline-flex px-3 py-1 border rounded-full text-sm font-bold ${bodyPartChipClass(part)}`}>
+              【{part}】 {items.length}種目
+            </span>
+          </div>
 
-            <div className="flex items-baseline justify-between mb-1">
-              <span className="text-xs text-gray-500">
-                {formatMd(first.date)} → {formatMd(last.date)}
-              </span>
-              <span className="text-sm">
-                {firstEqual && lastEqual ? (
-                  <>
-                    <span className="text-gray-500">
-                      {formatWeight(firstEqual.topWeight, h.info.is_assisted)}
+          {items.map((h) => {
+            const first = h.points[0];
+            const last = h.points[h.points.length - 1];
+            // 右上の変化値は「全セットが揃った日」だけを対象にする。
+            // 「更新回数」の定義と一致させ、揃ってない TOP の上下に振り回されないようにする。
+            const equalPoints = h.points.filter((p) => p.allEqual);
+            const firstEqual = equalPoints[0] ?? null;
+            const lastEqual = equalPoints[equalPoints.length - 1] ?? null;
+            const change =
+              firstEqual && lastEqual
+                ? h.info.is_assisted
+                  ? firstEqual.topWeight - lastEqual.topWeight
+                  : lastEqual.topWeight - firstEqual.topWeight
+                : null;
+            const isOpen = openId === h.info.id;
+            return (
+              <div key={h.info.id} className="px-4 py-3 border-b border-gray-200">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-sm font-bold truncate">{h.info.name}</span>
+                  {h.info.is_assisted && (
+                    <span className="ml-auto text-[11px] text-gray-600">
+                      アシスト(値小=高負荷)
                     </span>
-                    <span className="mx-1">→</span>
-                    <span className="font-bold">
-                      {formatWeight(lastEqual.topWeight, h.info.is_assisted)}
-                    </span>
-                    {change !== null && change !== 0 && (
-                      <span
-                        className={`ml-1 text-[11px] font-bold ${
-                          change > 0 ? "text-emerald-600" : "text-red-500"
+                  )}
+                </div>
+
+                <div className="flex items-baseline justify-between mb-1">
+                  <span className="text-xs text-gray-500">
+                    {formatMd(first.date)} → {formatMd(last.date)}
+                  </span>
+                  <span className="text-sm">
+                    {firstEqual && lastEqual ? (
+                      <>
+                        <span className="text-gray-500">
+                          {formatWeight(firstEqual.topWeight, h.info.is_assisted)}
+                        </span>
+                        <span className="mx-1">→</span>
+                        <span className="font-bold">
+                          {formatWeight(lastEqual.topWeight, h.info.is_assisted)}
+                        </span>
+                        {change !== null && change !== 0 && (
+                          <span
+                            className={`ml-1 text-[11px] font-bold ${
+                              change > 0 ? "text-emerald-600" : "text-red-500"
+                            }`}
+                          >
+                            ({change > 0 ? "+" : ""}
+                            {(+change.toFixed(2)).toString()}kg)
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-gray-400">揃った日なし</span>
+                    )}
+                  </span>
+                </div>
+
+                <MiniLineChart points={h.points} isAssisted={h.info.is_assisted} />
+
+                {/* 凡例 */}
+                <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[11px] text-gray-600">
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-3 h-0.5 bg-red-500" /> TOP(限界)
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-3 h-0.5 bg-blue-500" />
+                    バックオフ
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                    揃った日(全セット同重量)
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-[11px] text-gray-500">
+                    {h.points.length}日分
+                  </span>
+                  <button
+                    onClick={() => setOpenId(isOpen ? null : h.info.id)}
+                    className="px-3 py-1 bg-gray-200 rounded-full text-xs font-bold text-gray-700"
+                  >
+                    {isOpen ? "閉じる" : "詳細"}
+                  </button>
+                </div>
+
+                {isOpen && (
+                  <ul className="mt-2 space-y-1">
+                    {[...h.points].reverse().map((p) => (
+                      <li
+                        key={p.date}
+                        className={`flex items-center justify-between rounded-lg px-3 py-1.5 text-xs ${
+                          p.allEqual ? "bg-emerald-50 border border-emerald-200" : "bg-gray-100"
                         }`}
                       >
-                        ({change > 0 ? "+" : ""}
-                        {(+change.toFixed(2)).toString()}kg)
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-gray-400">揃った日なし</span>
-                )}
-              </span>
-            </div>
-
-            <MiniLineChart points={h.points} isAssisted={h.info.is_assisted} />
-
-            {/* 凡例 */}
-            <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[11px] text-gray-600">
-              <span className="flex items-center gap-1">
-                <span className="inline-block w-3 h-0.5 bg-red-500" /> TOP(限界)
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="inline-block w-3 h-0.5 bg-blue-500" />
-                バックオフ(TOPの%)
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                揃った日(全セット同重量)
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between mt-2">
-              <span className="text-[11px] text-gray-500">
-                {h.points.length}日分
-              </span>
-              <button
-                onClick={() => setOpenId(isOpen ? null : h.info.id)}
-                className="px-3 py-1 bg-gray-200 rounded-full text-xs font-bold text-gray-700"
-              >
-                {isOpen ? "閉じる" : "詳細"}
-              </button>
-            </div>
-
-            {isOpen && (
-              <ul className="mt-2 space-y-1">
-                {[...h.points].reverse().map((p) => (
-                  <li
-                    key={p.date}
-                    className={`flex items-center justify-between rounded-lg px-3 py-1.5 text-xs ${
-                      p.allEqual ? "bg-emerald-50 border border-emerald-200" : "bg-gray-100"
-                    }`}
-                  >
-                    <span className="text-gray-600">{formatMd(p.date)}</span>
-                    <span className="text-right">
-                      <span className="text-red-500 font-bold">
-                        TOP {formatWeight(p.topWeight, h.info.is_assisted)} ×{p.topReps}
-                      </span>
-                      {p.backoffWeight !== null && (
-                        <span className="ml-2 text-blue-500">
-                          BO {formatWeight(p.backoffWeight, h.info.is_assisted)}
+                        <span className="text-gray-600">{formatMd(p.date)}</span>
+                        <span className="text-right">
+                          <span className="text-red-500 font-bold">
+                            TOP {formatWeight(p.topWeight, h.info.is_assisted)} ×{p.topReps}
+                          </span>
+                          {p.backoffWeight !== null && (
+                            <span className="ml-2 text-blue-500">
+                              BO {formatWeight(p.backoffWeight, h.info.is_assisted)}
+                            </span>
+                          )}
                         </span>
-                      )}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        );
-      })}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </section>
+      ))}
     </div>
   );
 }

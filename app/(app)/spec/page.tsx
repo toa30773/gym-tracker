@@ -94,13 +94,13 @@ export default function SpecPage() {
             <span className="font-bold">最終セット = トップ</span>（限界まで追い込むセット）
           </li>
           <li>
-            <span className="font-bold">それ以外 = バックオフ</span>（トップに対する％で重量を指定。例: 85%）
+            <span className="font-bold">それ以外 = バックオフ</span>（kg を直接指定。多くは「全バックオフ同じ重量」で運用する）
           </li>
           <li>
             セットが1つだけの場合は、それがトップで「ストレートセット」扱い
           </li>
           <li>
-            トップ重量を変えるとバックオフは自動で再計算される
+            バックオフの重量を編集すると、デフォルトで <span className="font-bold">他のバックオフも同じ値に同期</span> される（ピッカーの「全バックオフに同期」OFF で個別入力も可）
           </li>
         </ul>
       </Section>
@@ -146,7 +146,8 @@ export default function SpecPage() {
             <span className="font-bold">「更新 N回」</span>（右上）：バックオフの重量が TOP と同値に揃った回数。重量レベルを何段階上げたかの目安
           </li>
           <li>
-            <span className="font-bold">「前回 Xkg ×Y回」</span>（各セット下）：そのセットを前回記録したときの実値。前回より落とさない目印に使う
+            <span className="font-bold">「前回 Xkg ×Y回」</span>（各セット下）：そのセットを前回記録したときの実値。前回より落とさない目印に使う。
+            <span className="font-bold">同じ名前の種目を複数メニューで使い回している場合は、どのメニューで実施したかに関わらず最新の記録</span> が表示される（TOP同士・バックオフは set_number 一致で対応）
           </li>
           <li>
             <span className="font-bold">TOP バッジ</span>：枠線付きで濃いグレーのセットがトップ（限界セット）
@@ -173,9 +174,12 @@ export default function SpecPage() {
 
       <Section title="📈 重量推移画面">
         <ul className="list-disc pl-5 space-y-0.5">
+          <li>
+            <span className="font-bold">部位ごとにまとめて</span> 表示（胸・背中・肩・腕・脚 …）
+          </li>
           <li>種目ごとに過去の重量変化をグラフ表示</li>
           <li>
-            <span className="font-bold">赤線 = TOP</span>（限界セット）、<span className="font-bold">青線 = バックオフ</span>（TOPの%）、<span className="font-bold">緑点 = 揃った日</span>（全セットが同じ重量で完成した日）
+            <span className="font-bold">赤線 = TOP</span>（限界セット）、<span className="font-bold">青線 = バックオフ</span>、<span className="font-bold">緑点 = 揃った日</span>（全セットが同じ重量で完成した日）
           </li>
           <li>右上の「○○kg → ○○kg (+Nkg)」は「揃った日」だけを対象にした重量変化</li>
           <li>「詳細」を押すと日付ごとの重量とレップ数の一覧</li>

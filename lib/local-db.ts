@@ -1,10 +1,11 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import type {
-  Menu,
-  Exercise,
-  WorkoutSet,
-  WeightUpdate,
-  SetLog,
+import {
+  normalizeExerciseName,
+  type Menu,
+  type Exercise,
+  type WorkoutSet,
+  type WeightUpdate,
+  type SetLog,
 } from "@/lib/types";
 
 const DB_NAME = "gym-tracker-local";
@@ -389,34 +390,62 @@ export async function getMenusWithExercisesForUser(
   return result;
 }
 
-// 指定セットの「最後に記録された実レップ数」を返す。
-// 履歴がなければ null。表示用の「前回 X 回」表示で使う。
-export async function getLastActualRepsForSet(
-  exerciseId: string,
-  setId: string,
-): Promise<number | null> {
-  const db = await getDB();
-  const logs = await db.getAllFromIndex("set_logs", "by_exercise", exerciseId);
-  const matching = logs
-    .filter((l) => l.set_id === setId)
-    .sort((a, b) => (a.performed_at < b.performed_at ? 1 : -1));
-  return matching.length > 0 ? matching[0].actual_reps : null;
-}
+// 同名種目（normalize 一致）の最新トレセッションを返す。
+// 「同じ種目を複数メニューで使い回している」場合、どのメニューで行ったかを問わず
+// 直近の実績を「前回」として参照できるようにするための関数。
+//
+// セッション = (exercise_id, 日付) の組。最新の performed_at で判定。
+// 戻り値: そのセッションの set_number → 実重量・実レップ の Map と、TOP の set_number。
+// 履歴なしなら null。
+export async function getLastSessionForExerciseName(
+  userId: string,
+  exerciseName: string,
+): Promise<{
+  bySetNumber: Map<number, { weight: number; reps: number }>;
+  topSetNumber: number;
+} | null> {
+  const normalized = normalizeExerciseName(exerciseName);
+  if (!normalized) return null;
 
-// 指定セットの「最後に記録された実重量と実レップ」を返す。
-// 履歴がなければ null。メインのセット行 "前回 Xkg ×Y" 表示で使う。
-export async function getLastActualForSet(
-  exerciseId: string,
-  setId: string,
-): Promise<{ weight: number; reps: number } | null> {
   const db = await getDB();
-  const logs = await db.getAllFromIndex("set_logs", "by_exercise", exerciseId);
-  const matching = logs
-    .filter((l) => l.set_id === setId)
-    .sort((a, b) => (a.performed_at < b.performed_at ? 1 : -1));
-  if (matching.length === 0) return null;
-  const last = matching[0];
-  return { weight: last.actual_weight, reps: last.actual_reps };
+  const allExercises = await db.getAllFromIndex("exercises", "by_user", userId);
+  const matchingIds = allExercises
+    .filter((e) => normalizeExerciseName(e.name) === normalized)
+    .map((e) => e.id);
+  if (matchingIds.length === 0) return null;
+
+  // 該当 exercise の全ログを集める
+  const allLogs: SetLog[] = [];
+  for (const exId of matchingIds) {
+    const logs = await db.getAllFromIndex("set_logs", "by_exercise", exId);
+    allLogs.push(...logs);
+  }
+  if (allLogs.length === 0) return null;
+
+  // セッション = (exercise_id, ymd)。最新 performed_at を持つセッションを選ぶ。
+  const sessions = new Map<string, SetLog[]>();
+  let bestKey = "";
+  let bestAt = "";
+  for (const l of allLogs) {
+    const ymd = l.performed_at.slice(0, 10);
+    const key = `${l.exercise_id}|${ymd}`;
+    if (!sessions.has(key)) sessions.set(key, []);
+    sessions.get(key)!.push(l);
+    if (l.performed_at > bestAt) {
+      bestAt = l.performed_at;
+      bestKey = key;
+    }
+  }
+  if (!bestKey) return null;
+
+  const session = sessions.get(bestKey)!;
+  const bySetNumber = new Map<number, { weight: number; reps: number }>();
+  let topSetNumber = 0;
+  for (const l of session) {
+    bySetNumber.set(l.set_number, { weight: l.actual_weight, reps: l.actual_reps });
+    if (l.set_number > topSetNumber) topSetNumber = l.set_number;
+  }
+  return { bySetNumber, topSetNumber };
 }
 
 // 指定種目の「全セットの actual_weight が同じ値で記録された日」を抽出し、

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   getMenusWithExercisesForUser,
   getEqualWeightMilestones,
-  getLastActualForSet,
+  getLastSessionForExerciseName,
   putSetLog,
   updateSet as updateSetLocal,
   newId,
@@ -196,7 +196,9 @@ export default function MainPage() {
     setMenu(combinedMenu);
 
     // 各種目の「揃った重量レベル到達数」と、各セットの「前回実績」を並列取得。
-    const [milestoneEntries, prevEntries] = await Promise.all([
+    // 前回実績は「同名種目の最新セッション」をメニュー横断で参照する（A案: TOP→TOP マッチ、
+    // バックオフは set_number 一致のみ）。
+    const [milestoneEntries, prevEntriesNested] = await Promise.all([
       Promise.all(
         combinedMenu.exercises.map(async (ex) => [
           ex.id,
@@ -204,13 +206,21 @@ export default function MainPage() {
         ] as const),
       ),
       Promise.all(
-        combinedMenu.exercises.flatMap((ex) =>
-          ex.sets.map(async (s) => [s.id, await getLastActualForSet(ex.id, s.id)] as const),
-        ),
+        combinedMenu.exercises.map(async (ex) => {
+          const session = await getLastSessionForExerciseName(userId, ex.name);
+          const sortedSets = [...ex.sets].sort((a, b) => a.set_number - b.set_number);
+          return sortedSets.map((s, i): readonly [string, { weight: number; reps: number } | null] => {
+            if (!session) return [s.id, null] as const;
+            const isTop = i === sortedSets.length - 1;
+            const target = isTop ? session.topSetNumber : s.set_number;
+            const log = session.bySetNumber.get(target);
+            return [s.id, log ?? null] as const;
+          });
+        }),
       ),
     ]);
     setMilestones(Object.fromEntries(milestoneEntries));
-    setPrevActuals(Object.fromEntries(prevEntries));
+    setPrevActuals(Object.fromEntries(prevEntriesNested.flat()));
 
     setLoading(false);
   }, []);
@@ -254,10 +264,15 @@ export default function MainPage() {
 
   async function startComplete(exercise: ExerciseWithSets) {
     const sortedSets = [...exercise.sets].sort((a, b) => a.set_number - b.set_number);
-    // 各セットの前回 actual を並列で取得（履歴なしは null）
-    const prevList = await Promise.all(
-      sortedSets.map((s) => getLastActualForSet(exercise.id, s.id)),
-    );
+    // 同名種目の最新セッションを1回引いて、TOP→TOP / バックオフ→set_number一致 で割り当て。
+    const userId = await getCurrentUserId();
+    const session = userId ? await getLastSessionForExerciseName(userId, exercise.name) : null;
+    const prevList = sortedSets.map((s, i): { weight: number; reps: number } | null => {
+      if (!session) return null;
+      const isTop = i === sortedSets.length - 1;
+      const target = isTop ? session.topSetNumber : s.set_number;
+      return session.bySetNumber.get(target) ?? null;
+    });
     setActualsModal({
       exerciseId: exercise.id,
       exerciseName: exercise.name,
@@ -347,16 +362,23 @@ export default function MainPage() {
       addCompleted(actualsModal.exerciseId);
 
       // 次回の "前回" 表示・"更新回数" の即時反映のため、当該種目だけ再取得して上書き。
+      // 前回値は「同名種目の最新セッション」を1回引いて TOP→TOP / バックオフ→set_number で割り当て。
       const exId = actualsModal.exerciseId;
-      const [newMilestone, ...newPrev] = await Promise.all([
+      const [newMilestone, newSession] = await Promise.all([
         getEqualWeightMilestones(exId),
-        ...actualsModal.rows.map((r) => getLastActualForSet(exId, r.set_id)),
+        getLastSessionForExerciseName(userId, actualsModal.exerciseName),
       ]);
       setMilestones((m) => ({ ...m, [exId]: newMilestone }));
       setPrevActuals((p) => {
         const next = { ...p };
         actualsModal.rows.forEach((r, i) => {
-          next[r.set_id] = newPrev[i] as { weight: number; reps: number } | null;
+          if (!newSession) {
+            next[r.set_id] = null;
+            return;
+          }
+          const isTop = i === actualsModal.rows.length - 1;
+          const target = isTop ? newSession.topSetNumber : r.set_number;
+          next[r.set_id] = newSession.bySetNumber.get(target) ?? null;
         });
         return next;
       });
