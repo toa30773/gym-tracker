@@ -15,8 +15,8 @@ export default function SpecPage() {
         </p>
         <ul className="list-disc pl-5 space-y-0.5 mt-1">
           <li>メニュー（最大10）を曜日や間隔で出し分け</li>
-          <li>セットごとの実績を記録し、自動で進歩を提案</li>
-          <li>重量推移をグラフで確認</li>
+          <li>セットごとの実績を記録し、重量推移をグラフで確認</li>
+          <li>同じ名前の種目は複数メニューを横断して前回値・重量を共有</li>
         </ul>
         <p className="mt-2">
           画面下のタブで <span className="font-bold">設定 / メニュー / 重量推移</span> を切り替えます。一番左の <span className="font-bold">?</span> ボタンがこの仕様書ページです。
@@ -81,9 +81,6 @@ export default function SpecPage() {
           <li>
             <span className="font-bold">アシスト</span>：チンニング等の補助マシン用（数値が小さいほど高負荷）
           </li>
-          <li>
-            <span className="font-bold">メモ</span>：種目ごとに自由記入
-          </li>
         </ul>
       </Section>
 
@@ -110,7 +107,7 @@ export default function SpecPage() {
         <ul className="list-disc pl-5 space-y-0.5 mt-1">
           <li>該当メニューが無い日は「休み」と表示</li>
           <li>複数メニューが同日に該当した場合は部位ごとに合体</li>
-          <li>椅子の高さ・メモも種目の近くに表示</li>
+          <li>椅子の高さも種目の近くに表示</li>
         </ul>
 
         <p className="font-bold mt-3">完了の操作</p>
@@ -124,22 +121,6 @@ export default function SpecPage() {
           <li>すべて完了すると「コンプリート」が表示される</li>
         </ul>
 
-        <p className="font-bold mt-3">進歩の自動提案</p>
-        <ul className="list-disc pl-5 space-y-0.5">
-          <li>
-            トップが <span className="font-bold">+3回以上オーバー</span>、または <span className="font-bold">+方向が2回連続</span> → 重量アップを提案
-          </li>
-          <li>
-            トップが <span className="font-bold">-3回以上不足</span>、または <span className="font-bold">-方向が2回連続</span> → 重量ダウンを提案
-          </li>
-          <li>
-            自重種目（重量0）の場合はレップ数の増減で提案
-          </li>
-          <li>
-            「計画に反映」で次回からの計画が自動更新される
-          </li>
-        </ul>
-
         <p className="font-bold mt-3">画面上の補助表示</p>
         <ul className="list-disc pl-5 space-y-0.5">
           <li>
@@ -150,7 +131,7 @@ export default function SpecPage() {
             <span className="font-bold">同じ名前の種目を複数メニューで使い回している場合は、どのメニューで実施したかに関わらず最新の記録</span> が表示される（TOP同士・バックオフは set_number 一致で対応）
           </li>
           <li>
-            <span className="font-bold">TOP バッジ</span>：枠線付きで濃いグレーのセットがトップ（限界セット）
+            <span className="font-bold">TOP バッジ</span>：オレンジ枠で強調されているセットがトップ（限界セット）
           </li>
         </ul>
       </Section>

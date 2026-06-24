@@ -139,18 +139,6 @@ export async function getAllSetLogsForUser(userId: string): Promise<SetLog[]> {
   return all.sort((a, b) => a.performed_at.localeCompare(b.performed_at));
 }
 
-export async function getWeightUpdateCountsForSets(
-  setIds: string[]
-): Promise<Record<string, number>> {
-  const db = await getDB();
-  const counts: Record<string, number> = {};
-  for (const setId of setIds) {
-    const updates = await db.getAllFromIndex("weight_updates", "by_set", setId);
-    counts[setId] = updates.length;
-  }
-  return counts;
-}
-
 // ──────────────────────────────────────────
 // Write helpers (mutations queue にも積む)
 // ──────────────────────────────────────────
@@ -276,18 +264,6 @@ export async function deleteSetLocal(setId: string, userId: string) {
   for (const u of updates) await db.delete("weight_updates", u.id);
   await db.delete("sets", setId);
   await enqueue(userId, "sets", "delete", setId, null);
-}
-
-export async function putWeightUpdate(update: WeightUpdate) {
-  const db = await getDB();
-  await db.put("weight_updates", update);
-  await enqueue(
-    update.user_id,
-    "weight_updates",
-    "insert",
-    update.id,
-    update as unknown as Record<string, unknown>
-  );
 }
 
 export async function putSetLog(log: SetLog) {

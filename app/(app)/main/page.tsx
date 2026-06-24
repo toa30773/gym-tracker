@@ -32,8 +32,7 @@ interface ActualRow {
   planned_reps: number;
   actual_weight: number;
   actual_reps: number;
-  // 前回そのセットを記録した時の実重量・実レップ。履歴なしなら null。
-  previous_actual_weight: number | null;
+  // 前回そのセットを記録した時の実レップ数。履歴なしなら null。表示用（前回比較）。
   previous_actual_reps: number | null;
 }
 
@@ -285,7 +284,6 @@ export default function MainPage() {
         planned_reps: s.reps,
         actual_weight: s.weight,
         actual_reps: s.reps,
-        previous_actual_weight: prevList[i]?.weight ?? null,
         previous_actual_reps: prevList[i]?.reps ?? null,
       })),
     });

@@ -18,7 +18,7 @@ export function parseYmdLocal(s: string): Date {
 }
 
 // 渡された Date を破壊せず、その日のローカル 0 時の新しい Date を返す。
-export function startOfDayLocal(d: Date): Date {
+function startOfDayLocal(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
