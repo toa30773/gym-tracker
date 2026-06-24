@@ -1,11 +1,16 @@
+import HeaderMenu from "@/components/HeaderMenu";
+
 export default function SpecPage() {
   return (
     <div className="pb-6">
-      <div className="px-4 pt-4 pb-2">
-        <h1 className="text-lg font-bold">仕様書 / 使い方</h1>
-        <p className="text-xs text-gray-500 mt-1">
-          このアプリの使い方をまとめたページです
-        </p>
+      <div className="flex items-start justify-between px-4 pt-4 pb-2 gap-2">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-lg font-bold">仕様書 / 使い方</h1>
+          <p className="text-xs text-gray-500 mt-1">
+            このアプリの使い方をまとめたページです
+          </p>
+        </div>
+        <HeaderMenu />
       </div>
       <div className="h-px bg-gray-400 mx-4 mb-4" />
 
@@ -19,7 +24,7 @@ export default function SpecPage() {
           <li>同じ名前の種目は複数メニューを横断して前回値・重量を共有</li>
         </ul>
         <p className="mt-2">
-          画面下のタブで <span className="font-bold">設定 / メニュー / 重量推移</span> を切り替えます。一番左の <span className="font-bold">?</span> ボタンがこの仕様書ページです。
+          画面右上の <span className="font-bold">☰</span> メニューから <span className="font-bold">設定 / メニュー / 重量推移 / 仕様書</span> を切り替えられます。
         </p>
       </Section>
 

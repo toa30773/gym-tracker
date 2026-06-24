@@ -24,6 +24,7 @@ import CrossMenuSyncDialog, {
   type ExerciseChangeEntry,
   type SyncTargetMenu,
 } from "@/components/CrossMenuSyncDialog";
+import HeaderMenu from "@/components/HeaderMenu";
 import type { Menu, Exercise, WorkoutSet, MenuWithExercises } from "@/lib/types";
 import { WEIGHT_STEPS, roundToStep, normalizeExerciseName, bodyPartChipClass } from "@/lib/types";
 import { ymdLocal } from "@/lib/date";
@@ -141,7 +142,7 @@ export default function SettingsPage() {
   const [baseline, setBaseline] = useState<string>(() =>
     JSON.stringify(defaultMenu(0)),
   );
-  // 未保存ガード：BottomNav で別ページへ遷移しようとした時にここに proceed が積まれる
+  // 未保存ガード：ヘッダーの ☰ メニューなどで別ページへ遷移しようとした時にここに proceed が積まれる
   const [pendingProceed, setPendingProceed] = useState<(() => void) | null>(null);
   // 反映確認ダイアログ。保存時に他メニューへ同期するかをユーザーに聞くために開く。
   // onResolve は save() が返した Promise を解決する。決定で true、キャンセルで false。
@@ -264,7 +265,7 @@ export default function SettingsPage() {
 
   function switchMenu(newIdx: number) {
     if (newIdx < 0 || newIdx >= visibleCount || newIdx === currentIdx) return;
-    // メニュー切替も BottomNav と同じガードに通す。
+    // メニュー切替も ☰ メニュー遷移と同じガードに通す。
     // 未保存編集ありなら確認モーダル → 保存/破棄 後に切替。
     requestNavigation(() => {
       setCurrentIdx(newIdx);
@@ -521,7 +522,7 @@ export default function SettingsPage() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
 
-  // BottomNav からの別ページ遷移を受け止める guard。
+  // ヘッダー ☰ メニューからの別ページ遷移を受け止める guard。
   // proceed を pendingProceed に積んで確認モーダルを開く。
   useEffect(() => {
     if (!isDirty) {
@@ -921,6 +922,7 @@ export default function SettingsPage() {
             </button>
           );
         })()}
+        <HeaderMenu />
       </div>
 
       {/* 曜日 / 間隔セレクタ */}
@@ -1203,10 +1205,13 @@ export default function SettingsPage() {
       </div>
 
       {/* 保存バーは AppLayout のスロットへ Portal 経由で挿入する。
-          main の外側に置くので、スクロール状態に関係なく BottomNav の真上に出る。 */}
+          main の外側に置くので、スクロール状態に関係なく画面下部に固定で出る。 */}
       {actionBarSlot &&
         createPortal(
-          <div className="mx-auto max-w-[430px] bg-white border-t border-gray-200 px-3 py-2 flex items-center gap-2">
+          <div
+            className="mx-auto max-w-[430px] bg-white border-t border-gray-200 px-3 pt-2 flex items-center gap-2"
+            style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}
+          >
             <div className="flex-1 flex items-center min-w-0">
               {menuData.id && (
                 <button

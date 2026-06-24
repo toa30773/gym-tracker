@@ -24,6 +24,7 @@ import CrossMenuSyncDialog, {
   type ExerciseChangeEntry,
   type SyncTargetMenu,
 } from "@/components/CrossMenuSyncDialog";
+import HeaderMenu from "@/components/HeaderMenu";
 
 interface ActualRow {
   set_id: string;
@@ -532,15 +533,27 @@ export default function MainPage() {
     menu !== null && menu.exercises.length > 0 && visibleGroups.length === 0;
 
   if (loading) {
-    return <div className="flex items-center justify-center h-40 text-sm text-gray-500">読み込み中...</div>;
+    return (
+      <div className="pb-2">
+        <div className="flex items-center justify-end px-4 pt-4 pb-2">
+          <HeaderMenu />
+        </div>
+        <div className="flex items-center justify-center h-40 text-sm text-gray-500">読み込み中...</div>
+      </div>
+    );
   }
 
   if (!menu) {
     return (
-      <div className="flex items-center justify-center h-60">
-        <span className="text-5xl font-extrabold tracking-widest text-gray-700">
-          休み
-        </span>
+      <div className="pb-2">
+        <div className="flex items-center justify-end px-4 pt-4 pb-2">
+          <HeaderMenu />
+        </div>
+        <div className="flex items-center justify-center h-60">
+          <span className="text-5xl font-extrabold tracking-widest text-gray-700">
+            休み
+          </span>
+        </div>
       </div>
     );
   }
@@ -551,11 +564,12 @@ export default function MainPage() {
       <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2">
         <span className="text-base font-bold whitespace-nowrap flex-shrink-0">今日の筋トレメニュー</span>
         <div
-          className="bg-gray-200 rounded px-3 py-1 text-sm truncate max-w-[55%]"
+          className="bg-gray-200 rounded px-3 py-1 text-sm truncate flex-1 min-w-0"
           title={menu.name}
         >
           {menu.name}
         </div>
+        <HeaderMenu />
       </div>
       <div className="h-px bg-gray-400 mx-4 mb-3" />
 

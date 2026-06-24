@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { getAllExercisesForUser, getAllSetLogsForUser } from "@/lib/local-db";
 import { getCurrentUserId } from "@/lib/sync";
 import { formatWeight, bodyPartChipClass } from "@/lib/types";
+import HeaderMenu from "@/components/HeaderMenu";
 
 // 部位の表示順。設定画面の BODY_PARTS と揃える。
 // 未定義の部位はこの後ろに alphabetical で並べる。
@@ -308,16 +309,26 @@ export default function WeightHistoryPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-40 text-sm text-gray-500">
-        読み込み中...
+      <div className="pb-2">
+        <div className="flex items-center justify-end px-4 pt-4 pb-2">
+          <HeaderMenu />
+        </div>
+        <div className="flex items-center justify-center h-40 text-sm text-gray-500">
+          読み込み中...
+        </div>
       </div>
     );
   }
 
   if (histories.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-40 gap-2">
-        <p className="text-sm text-gray-500">まだ実績がありません</p>
+      <div className="pb-2">
+        <div className="flex items-center justify-end px-4 pt-4 pb-2">
+          <HeaderMenu />
+        </div>
+        <div className="flex flex-col items-center justify-center h-40 gap-2">
+          <p className="text-sm text-gray-500">まだ実績がありません</p>
+        </div>
       </div>
     );
   }
@@ -325,11 +336,12 @@ export default function WeightHistoryPage() {
   return (
     <div className="pb-2">
       {/* ヘッダー */}
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
-        <h1 className="text-base font-bold">重量推移</h1>
-        <span className="text-xs text-gray-500">
+      <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2">
+        <h1 className="text-base font-bold flex-shrink-0">重量推移</h1>
+        <span className="text-xs text-gray-500 ml-auto">
           通算 {totalSessions}日
         </span>
+        <HeaderMenu />
       </div>
       <div className="h-px bg-gray-400 mx-4 mb-3" />
 
