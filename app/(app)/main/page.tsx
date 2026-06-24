@@ -17,7 +17,7 @@ import type {
   ExerciseWithSets,
   WorkoutSet,
 } from "@/lib/types";
-import { roundToStep, formatWeight, normalizeExerciseName } from "@/lib/types";
+import { roundToStep, formatWeight, normalizeExerciseName, bodyPartChipClass } from "@/lib/types";
 import { diffDaysLocal, parseYmdLocal, ymdLocal } from "@/lib/date";
 import CrossMenuSyncDialog, {
   type ChangedSet,
@@ -529,15 +529,15 @@ export default function MainPage() {
     <div className="pb-2">
       {/* ヘッダー */}
       <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2">
-        <span className="text-sm font-bold whitespace-nowrap flex-shrink-0">今日の筋トレメニュー</span>
+        <span className="text-base font-bold whitespace-nowrap flex-shrink-0">今日の筋トレメニュー</span>
         <div
-          className="bg-gray-200 rounded px-3 py-1 text-xs truncate max-w-[55%]"
+          className="bg-gray-200 rounded px-3 py-1 text-sm truncate max-w-[55%]"
           title={menu.name}
         >
           {menu.name}
         </div>
       </div>
-      <div className="h-px bg-black mx-4 mb-3" />
+      <div className="h-px bg-gray-400 mx-4 mb-3" />
 
       {isComplete ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3">
@@ -582,32 +582,38 @@ export default function MainPage() {
                             {/* 部位（グループ先頭のみ） + 更新回数（バックオフ=TOP に揃った重量レベル到達数） */}
                             <div className="flex items-center justify-between mb-1">
                               {isGroupHead ? (
-                                <div className="inline-flex px-3 py-1 border border-gray-400 rounded-full text-xs">
+                                <div className={`inline-flex px-3 py-1 border rounded-full text-sm font-bold ${bodyPartChipClass(ex.body_part)}`}>
                                   【{ex.body_part}】
                                 </div>
                               ) : (
                                 <span />
                               )}
-                              <span className="text-xs text-gray-500">
-                                更新回数{milestones[ex.id] ?? 0}回
+                              <span
+                                className={`text-xs font-bold ${
+                                  (milestones[ex.id] ?? 0) > 0
+                                    ? "text-emerald-600"
+                                    : "text-gray-500"
+                                }`}
+                                title="バックオフ重量が TOP と同じ重量に揃った回数"
+                              >
+                                更新 {milestones[ex.id] ?? 0}回
                               </span>
                             </div>
 
                             {/* 種目名 + 椅子の高さ */}
                             <div className="flex items-center gap-2 mb-2">
-                              <span className="text-sm">●</span>
-                              <div className="bg-gray-200 rounded-full px-3 py-1 text-xs flex-1">
+                              <div className="bg-white border border-gray-400 rounded-full px-3 py-1 text-sm font-bold flex-1">
                                 {ex.name}
                               </div>
                               {machineHeight && (
-                                <div className="bg-gray-200 rounded-full px-3 py-1 text-xs whitespace-nowrap">
+                                <div className="bg-gray-100 border border-gray-300 rounded-full px-3 py-1 text-xs text-gray-700 whitespace-nowrap">
                                   椅子: {machineHeight}
                                 </div>
                               )}
                             </div>
 
                             {/* セットリスト（末尾=TOP、その他=バックオフ）。
-                                各セットの下に「前回 Xkg ×Y」を薄く表示。 */}
+                                各セットの下に「前回 Xkg ×Y」を表示。 */}
                             {ex.sets.map((s: WorkoutSet, sIdx) => {
                               const isTop = sIdx === ex.sets.length - 1;
                               const prev = prevActuals[s.id];
@@ -615,7 +621,7 @@ export default function MainPage() {
                                 <div key={s.id} className="mb-1.5">
                                   <div className="flex items-center gap-2 pl-4">
                                     <div
-                                      className={`flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${
+                                      className={`flex items-center justify-center w-6 h-6 rounded text-xs font-bold ${
                                         isTop
                                           ? "bg-gray-800 text-white"
                                           : "bg-gray-200"
@@ -623,19 +629,33 @@ export default function MainPage() {
                                     >
                                       {s.set_number}
                                     </div>
-                                    <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
+                                    {/* 重量チップ（塗りつぶし）。TOP は amber でアクセント */}
+                                    <div
+                                      className={`flex-1 rounded-full py-1 text-sm font-bold text-center ${
+                                        isTop
+                                          ? "bg-amber-100 border border-amber-500 text-amber-900"
+                                          : "bg-gray-200"
+                                      }`}
+                                    >
                                       {formatWeight(s.weight, ex.is_assisted)}
                                       {isTop && (
-                                        <span className="ml-1 text-[9px] text-gray-700 font-bold">TOP</span>
+                                        <span className="ml-1 text-[11px] font-bold">TOP</span>
                                       )}
                                     </div>
-                                    <div className="flex-1 bg-gray-200 rounded-full py-1 text-xs text-center">
-                                      {s.reps}回
+                                    {/* レップチップ（白＋枠線で重量と形状を差別化）+ 「×」prefix */}
+                                    <div
+                                      className={`flex-1 rounded-full py-1 text-sm text-center border ${
+                                        isTop
+                                          ? "bg-white border-amber-500 text-amber-900 font-bold"
+                                          : "bg-white border-gray-300"
+                                      }`}
+                                    >
+                                      × {s.reps}回
                                     </div>
                                   </div>
                                   {prev && (
-                                    <div className="pl-11 text-[9px] text-gray-400 mt-0.5">
-                                      前回 {formatWeight(prev.weight, ex.is_assisted)} ×{prev.reps}回
+                                    <div className="pl-11 text-[11px] text-gray-600 mt-0.5">
+                                      前回 {formatWeight(prev.weight, ex.is_assisted)} × {prev.reps}回
                                     </div>
                                   )}
                                 </div>
@@ -645,14 +665,14 @@ export default function MainPage() {
                         </div>
                       </div>
 
-                      {!isLast && <div className="h-px bg-black mx-4 my-1" />}
+                      {!isLast && <div className="h-px bg-gray-300 mx-4 my-1" />}
                     </div>
                   );
                 })}
             </div>
           ))}
 
-          <p className="text-center text-[10px] text-gray-400 mt-3">
+          <p className="text-center text-xs text-gray-500 mt-3">
             ← 種目を左にスワイプで「完了」
           </p>
         </>
@@ -668,10 +688,10 @@ export default function MainPage() {
             className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-4 pb-8 max-h-[85vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-center text-sm font-bold mb-1">
+            <p className="text-center text-base font-bold mb-1">
               {actualsModal.exerciseName} の実績
             </p>
-            <p className="text-center text-[10px] text-gray-500 mb-3">
+            <p className="text-center text-xs text-gray-500 mb-3">
               予定通りなら何もしないで「記録して完了」を押してください
             </p>
 
@@ -681,20 +701,20 @@ export default function MainPage() {
               <div key={row.set_id} className="mb-3 p-2 bg-gray-50 rounded-xl">
                 <div className="flex items-center gap-2 mb-1.5">
                   <div
-                    className={`flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${
+                    className={`flex items-center justify-center w-6 h-6 rounded text-xs font-bold ${
                       isTop ? "bg-gray-800 text-white" : "bg-gray-300"
                     }`}
                   >
                     {row.set_number}
                   </div>
-                  <span className="text-[10px] text-gray-500">
+                  <span className="text-xs text-gray-600">
                     予定 {formatWeight(row.planned_weight, actualsModal.isAssisted)} × {row.planned_reps}回
                   </span>
                   {/* 前回値（予定と同じなら非表示）。前回より落とさない動機づけ用 */}
                   {row.previous_actual_reps !== null &&
                     row.previous_actual_reps !== row.planned_reps && (
                       <span
-                        className={`text-[10px] font-bold ${
+                        className={`text-xs font-bold ${
                           row.previous_actual_reps > row.planned_reps
                             ? "text-emerald-600"
                             : "text-red-500"
@@ -706,13 +726,13 @@ export default function MainPage() {
                       </span>
                     )}
                   {isTop && (
-                    <span className="text-[9px] font-bold text-gray-800 ml-auto">TOP（限界まで）</span>
+                    <span className="text-[11px] font-bold text-gray-800 ml-auto">TOP（限界まで）</span>
                   )}
                 </div>
                 <div className="flex items-center gap-1.5 pl-7">
                   {/* 実重量 */}
                   <button
-                    className="w-7 h-7 bg-gray-200 rounded-full text-base font-bold leading-none"
+                    className="w-8 h-8 bg-gray-200 rounded-full text-base font-bold leading-none"
                     onClick={() =>
                       updateActualRow(
                         idx,
@@ -742,10 +762,10 @@ export default function MainPage() {
                       }
                     }}
                     onFocus={(e) => e.currentTarget.select()}
-                    className="min-w-[64px] w-16 text-center text-xs font-bold bg-gray-100 rounded outline-none"
+                    className="min-w-[64px] w-16 text-center text-sm font-bold bg-gray-100 border border-gray-300 rounded outline-none"
                   />
                   <button
-                    className="w-7 h-7 bg-gray-200 rounded-full text-base font-bold leading-none"
+                    className="w-8 h-8 bg-gray-200 rounded-full text-base font-bold leading-none"
                     onClick={() =>
                       updateActualRow(
                         idx,
@@ -756,21 +776,21 @@ export default function MainPage() {
                   >
                     ＋
                   </button>
-                  <span className="mx-1 text-xs">×</span>
+                  <span className="mx-1 text-sm">×</span>
                   {/* 実レップ */}
                   <button
-                    className="w-7 h-7 bg-gray-200 rounded-full text-base font-bold leading-none"
+                    className="w-8 h-8 bg-gray-200 rounded-full text-base font-bold leading-none"
                     onClick={() =>
                       updateActualRow(idx, "actual_reps", Math.max(0, row.actual_reps - 1))
                     }
                   >
                     −
                   </button>
-                  <span className="min-w-[40px] text-center text-xs font-bold">
+                  <span className="min-w-[40px] text-center text-sm font-bold">
                     {row.actual_reps}回
                   </span>
                   <button
-                    className="w-7 h-7 bg-gray-200 rounded-full text-base font-bold leading-none"
+                    className="w-8 h-8 bg-gray-200 rounded-full text-base font-bold leading-none"
                     onClick={() =>
                       updateActualRow(idx, "actual_reps", row.actual_reps + 1)
                     }
@@ -783,7 +803,7 @@ export default function MainPage() {
             })}
 
             {saveError && (
-              <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded-lg text-[10px] text-red-700 whitespace-pre-wrap">
+              <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 whitespace-pre-wrap">
                 {saveError}
               </div>
             )}

@@ -30,13 +30,13 @@ export default function BottomNav() {
         onClick={() => handleClick("/spec")}
         aria-label="仕様書"
         title="仕様書 / 使い方"
-        className={`w-9 h-9 flex items-center justify-center rounded-full text-xs font-bold transition-colors flex-shrink-0 ${
+        className={`w-9 h-9 flex items-center justify-center rounded-full text-base font-bold transition-colors flex-shrink-0 ${
           isSpecActive
             ? "bg-gray-800 text-white"
-            : "bg-gray-300 text-gray-600"
+            : "bg-gray-200 text-gray-700"
         }`}
       >
-        ●
+        ?
       </button>
       {tabs.map((tab) => {
         const isActive = pathname === tab.href;

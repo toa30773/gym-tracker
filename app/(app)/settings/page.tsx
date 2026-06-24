@@ -25,7 +25,7 @@ import CrossMenuSyncDialog, {
   type SyncTargetMenu,
 } from "@/components/CrossMenuSyncDialog";
 import type { Menu, Exercise, WorkoutSet, MenuWithExercises } from "@/lib/types";
-import { WEIGHT_STEPS, roundToStep, normalizeExerciseName } from "@/lib/types";
+import { WEIGHT_STEPS, roundToStep, normalizeExerciseName, bodyPartChipClass } from "@/lib/types";
 import { ymdLocal } from "@/lib/date";
 
 const BODY_PARTS = ["胸", "背中", "肩", "腕", "脚", "腹", "体幹", "全身"];
@@ -990,7 +990,7 @@ export default function SettingsPage() {
             )}
 
             {menuData.interval_days && menuData.start_date && (
-              <p className="text-[10px] text-gray-500 mt-2">
+              <p className="text-xs text-gray-500 mt-2">
                 開始 {menuData.start_date}
                 {showNextDistinct && (
                   <span className="ml-2">
@@ -1001,7 +1001,7 @@ export default function SettingsPage() {
             )}
 
             {menuData.days.length >= 2 && (
-              <p className="text-[10px] text-gray-500 mt-2">
+              <p className="text-xs text-gray-500 mt-2">
                 間隔指定は起点曜日を 1 つだけ選んだ場合に使えます
               </p>
             )}
@@ -1009,7 +1009,7 @@ export default function SettingsPage() {
         );
       })()}
 
-      <div className="h-px bg-black mx-4 mb-3" />
+      <div className="h-px bg-gray-400 mx-4 mb-3" />
 
       {/* 種目リスト */}
       {menuData.exercises.map((ex, exIdx) => {
@@ -1022,7 +1022,7 @@ export default function SettingsPage() {
             <div className="mb-2">
               <button
                 onClick={() => setPicker({ exIdx, setIdx: 0, field: "body_part" })}
-                className="inline-flex items-center px-3 py-1 bg-white border border-gray-400 rounded-full text-xs"
+                className={`inline-flex items-center px-3 py-1 border rounded-full text-sm font-bold ${bodyPartChipClass(ex.body_part)}`}
               >
                 【{ex.body_part || "部位を入力"}】
               </button>
@@ -1032,17 +1032,16 @@ export default function SettingsPage() {
           <div className="border border-gray-300 rounded-xl p-3 relative">
             {/* 種目名 + ＋ボタン（同じ部位グループに空種目を追加） + −削除ボタン */}
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-sm">●</span>
               <input
                 type="text"
                 value={ex.name}
                 onChange={(e) => updateExercise(exIdx, "name", e.target.value)}
                 placeholder="種目を入力"
-                className="flex-1 bg-gray-200 rounded-full px-3 py-1.5 text-xs outline-none placeholder-gray-500"
+                className="flex-1 bg-gray-100 border border-gray-300 rounded-full px-3 py-1.5 text-sm outline-none placeholder-gray-500"
               />
               <button
                 onClick={() => addExerciseSameGroup(exIdx)}
-                className="w-7 h-7 flex items-center justify-center bg-gray-200 rounded-full text-lg font-bold leading-none flex-shrink-0"
+                className="w-8 h-8 flex items-center justify-center bg-gray-200 rounded-full text-lg font-bold leading-none flex-shrink-0"
                 title="同じ部位で空の種目を追加"
               >
                 ＋
@@ -1050,7 +1049,7 @@ export default function SettingsPage() {
               {exIdx > 0 && (
                 <button
                   onClick={() => moveExercise(exIdx, -1)}
-                  className="w-6 h-6 flex items-center justify-center bg-gray-100 rounded-full text-[10px] leading-none flex-shrink-0 border border-gray-300"
+                  className="w-8 h-8 flex items-center justify-center bg-gray-100 rounded-full text-xs leading-none flex-shrink-0 border border-gray-300"
                   title="1つ上へ"
                 >
                   ▲
@@ -1059,7 +1058,7 @@ export default function SettingsPage() {
               {exIdx < menuData.exercises.length - 1 && (
                 <button
                   onClick={() => moveExercise(exIdx, 1)}
-                  className="w-6 h-6 flex items-center justify-center bg-gray-100 rounded-full text-[10px] leading-none flex-shrink-0 border border-gray-300"
+                  className="w-8 h-8 flex items-center justify-center bg-gray-100 rounded-full text-xs leading-none flex-shrink-0 border border-gray-300"
                   title="1つ下へ"
                 >
                   ▼
@@ -1068,7 +1067,7 @@ export default function SettingsPage() {
               {menuData.exercises.length > 1 && (
                 <button
                   onClick={() => removeExercise(exIdx)}
-                  className="w-7 h-7 flex items-center justify-center bg-red-100 text-red-600 rounded-full text-base font-bold leading-none border border-red-300 flex-shrink-0"
+                  className="w-8 h-8 flex items-center justify-center bg-red-100 text-red-600 rounded-full text-base font-bold leading-none border border-red-300 flex-shrink-0"
                   title="この種目を削除"
                 >
                   −
@@ -1083,18 +1082,18 @@ export default function SettingsPage() {
                 value={ex.sets[0]?.machine_height || ""}
                 onChange={(e) => updateSet(exIdx, 0, "machine_height", e.target.value)}
                 placeholder="椅子の高さ（任意）"
-                className="flex-1 bg-gray-200 rounded-full px-3 py-1.5 text-xs outline-none placeholder-gray-500"
+                className="flex-1 bg-gray-100 border border-gray-300 rounded-full px-3 py-1.5 text-sm outline-none placeholder-gray-500"
               />
             </div>
 
             {/* 刻み + アシスト */}
             <div className="flex items-center gap-2 mb-2 pl-4 flex-wrap">
-              <span className="text-[10px] text-gray-500">刻み</span>
+              <span className="text-xs text-gray-500">刻み</span>
               {WEIGHT_STEPS.map((step) => (
                 <button
                   key={step}
                   onClick={() => updateExercise(exIdx, "weight_step", step)}
-                  className={`px-2 py-0.5 rounded-full text-[10px] border ${
+                  className={`px-2.5 py-1 rounded-full text-xs border ${
                     ex.weight_step === step
                       ? "bg-gray-800 text-white border-gray-800"
                       : "bg-white text-gray-700 border-gray-300"
@@ -1103,16 +1102,17 @@ export default function SettingsPage() {
                   {step}kg
                 </button>
               ))}
-              <label className="flex items-center gap-1 ml-1 text-[10px] text-gray-700 cursor-pointer">
+              <label className="flex items-center gap-1 ml-1 text-xs text-gray-700 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={ex.is_assisted}
                   onChange={(e) =>
                     updateExercise(exIdx, "is_assisted", e.target.checked)
                   }
-                  className="accent-gray-800"
+                  className="accent-gray-800 w-4 h-4"
                 />
                 アシスト
+                <span className="text-[11px] text-gray-500">(値小=高負荷)</span>
               </label>
             </div>
 
@@ -1123,31 +1123,41 @@ export default function SettingsPage() {
               return (
                 <div key={setIdx} className="flex items-center gap-1.5 mb-2 pl-4">
                   <div
-                    className={`flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold flex-shrink-0 ${
+                    className={`flex items-center justify-center w-6 h-6 rounded text-xs font-bold flex-shrink-0 ${
                       isTop ? "bg-gray-800 text-white" : "bg-gray-300"
                     }`}
                   >
                     {s.set_number}
                   </div>
                   {isTop && (
-                    <span className="text-[10px] font-bold text-gray-700 px-1">TOP</span>
+                    <span className="text-[11px] font-bold text-amber-700 px-1">TOP</span>
                   )}
+                  {/* 重量チップ（塗りつぶし）。TOP は amber でアクセント */}
                   <button
-                    className="flex-1 bg-gray-200 rounded-full py-1.5 text-xs text-center"
+                    className={`flex-1 rounded-full py-1.5 text-sm font-bold text-center ${
+                      isTop
+                        ? "bg-amber-100 border border-amber-500 text-amber-900"
+                        : "bg-gray-200"
+                    }`}
                     onClick={() => setPicker({ exIdx, setIdx, field: "weight" })}
                   >
                     {s.weight}kg
                   </button>
+                  {/* レップチップ（白＋枠線で重量と差別化）+「×」prefix */}
                   <button
-                    className="flex-1 bg-gray-200 rounded-full py-1.5 text-xs text-center"
+                    className={`flex-1 rounded-full py-1.5 text-sm text-center border ${
+                      isTop
+                        ? "bg-white border-amber-500 text-amber-900 font-bold"
+                        : "bg-white border-gray-300"
+                    }`}
                     onClick={() => setPicker({ exIdx, setIdx, field: "reps" })}
                   >
-                    {s.reps}回
+                    × {s.reps}回
                   </button>
                   {ex.sets.length > 1 && (
                     <button
                       onClick={() => removeSet(exIdx, setIdx)}
-                      className="w-6 h-6 flex items-center justify-center bg-red-100 text-red-600 rounded-full text-sm font-bold leading-none flex-shrink-0 border border-red-300"
+                      className="w-8 h-8 flex items-center justify-center bg-red-100 text-red-600 rounded-full text-sm font-bold leading-none flex-shrink-0 border border-red-300"
                       title="セットを削除"
                     >
                       −
@@ -1156,7 +1166,7 @@ export default function SettingsPage() {
                   {isTop && (
                     <button
                       onClick={() => addSet(exIdx)}
-                      className="w-6 h-6 flex items-center justify-center bg-gray-200 rounded-full text-base font-bold leading-none flex-shrink-0"
+                      className="w-8 h-8 flex items-center justify-center bg-gray-200 rounded-full text-base font-bold leading-none flex-shrink-0"
                       title="バックオフセットを追加"
                     >
                       ＋
@@ -1201,7 +1211,7 @@ export default function SettingsPage() {
               {menuData.id && (
                 <button
                   onClick={() => setConfirmDelete(true)}
-                  className="text-[10px] text-red-500 underline whitespace-nowrap"
+                  className="text-xs text-red-500 underline whitespace-nowrap"
                 >
                   このメニューを削除
                 </button>
@@ -1212,7 +1222,7 @@ export default function SettingsPage() {
                 <button
                   key={i}
                   onClick={() => switchMenu(i)}
-                  className={`flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold transition-colors flex-shrink-0 ${
+                  className={`flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold transition-colors flex-shrink-0 ${
                     currentIdx === i
                       ? "bg-gray-800 text-white"
                       : i < savedMenus.length
@@ -1226,19 +1236,19 @@ export default function SettingsPage() {
             </div>
             <div className="flex-1 flex items-center justify-end gap-2">
               {isDirty && (
-                <span className="text-[10px] text-red-500 font-bold whitespace-nowrap">
+                <span className="text-xs text-red-500 font-bold whitespace-nowrap">
                   未保存
                 </span>
               )}
               {message && (
-                <span className="text-[10px] text-green-600 whitespace-nowrap">
+                <span className="text-xs text-green-600 whitespace-nowrap">
                   {message}
                 </span>
               )}
               <button
                 onClick={save}
                 disabled={saving}
-                className="px-4 py-1.5 bg-gray-800 text-white rounded-full text-xs font-bold disabled:opacity-50 whitespace-nowrap"
+                className="px-4 py-1.5 bg-gray-800 text-white rounded-full text-sm font-bold disabled:opacity-50 whitespace-nowrap"
               >
                 {saving ? "保存中..." : "保存"}
               </button>
@@ -1271,7 +1281,7 @@ export default function SettingsPage() {
             className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-4 pb-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-center text-xs font-bold mb-3">
+            <p className="text-center text-sm font-bold mb-3">
               {picker.field === "weight"
                 ? isTopPicker
                   ? "TOP の重量を入力（kg）"
@@ -1281,15 +1291,15 @@ export default function SettingsPage() {
                 : "部位を選択"}
             </p>
             {showSyncToggle && (
-              <label className="flex items-center justify-center gap-2 mb-3 text-[11px] text-gray-700">
+              <label className="flex items-center justify-center gap-2 mb-3 text-xs text-gray-700">
                 <input
                   type="checkbox"
                   checked={syncBackoffs}
                   onChange={(e) => setSyncBackoffs(e.target.checked)}
-                  className="accent-gray-800"
+                  className="accent-gray-800 w-4 h-4"
                 />
                 全バックオフに同期
-                <span className="text-[10px] text-gray-400">
+                <span className="text-[11px] text-gray-500">
                   （OFFでこのセットだけ）
                 </span>
               </label>
@@ -1392,8 +1402,8 @@ export default function SettingsPage() {
             className="bg-white rounded-2xl p-5 max-w-xs w-full"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-sm font-bold mb-1">未保存の変更があります</p>
-            <p className="text-[10px] text-gray-600 mb-4">
+            <p className="text-base font-bold mb-1">未保存の変更があります</p>
+            <p className="text-xs text-gray-600 mb-4">
               保存していない編集を破棄して移動しますか？
             </p>
             <div className="flex flex-col gap-2">
@@ -1405,7 +1415,7 @@ export default function SettingsPage() {
                   const ok = await save();
                   if (ok) proceed();
                 }}
-                className="py-2 bg-gray-800 text-white rounded-full text-xs font-bold"
+                className="py-2.5 bg-gray-800 text-white rounded-full text-sm font-bold"
               >
                 保存して移動
               </button>
@@ -1415,13 +1425,13 @@ export default function SettingsPage() {
                   setPendingProceed(null);
                   proceed();
                 }}
-                className="py-2 bg-red-50 text-red-600 border border-red-200 rounded-full text-xs font-bold"
+                className="py-2.5 bg-red-50 text-red-600 border border-red-200 rounded-full text-sm font-bold"
               >
                 破棄して移動
               </button>
               <button
                 onClick={() => setPendingProceed(null)}
-                className="py-2 bg-gray-200 rounded-full text-xs font-bold"
+                className="py-2.5 bg-gray-200 rounded-full text-sm font-bold"
               >
                 キャンセル
               </button>
@@ -1440,24 +1450,24 @@ export default function SettingsPage() {
             className="bg-white rounded-2xl p-5 max-w-xs w-full"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-sm font-bold mb-2">
+            <p className="text-base font-bold mb-2">
               「{menuData.name || "（無題）"}」を削除しますか？
             </p>
-            <p className="text-[10px] text-gray-600 mb-4">
+            <p className="text-xs text-gray-600 mb-4">
               このメニューの種目・セット・重量更新履歴・実績データもすべて削除されます。元に戻せません。
             </p>
             <div className="flex gap-2">
               <button
                 onClick={() => setConfirmDelete(false)}
                 disabled={deleting}
-                className="flex-1 py-2 bg-gray-200 rounded-full text-xs font-bold disabled:opacity-50"
+                className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold disabled:opacity-50"
               >
                 キャンセル
               </button>
               <button
                 onClick={deleteMenu}
                 disabled={deleting}
-                className="flex-1 py-2 bg-red-500 text-white rounded-full text-xs font-bold disabled:opacity-50"
+                className="flex-1 py-2.5 bg-red-500 text-white rounded-full text-sm font-bold disabled:opacity-50"
               >
                 {deleting ? "削除中..." : "削除する"}
               </button>
@@ -1477,10 +1487,10 @@ export default function SettingsPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-bold">他のメニューから種目をコピー</h2>
+              <h2 className="text-base font-bold">他のメニューから種目をコピー</h2>
               <button
                 onClick={() => setShowCopyModal(false)}
-                className="text-xs text-gray-500"
+                className="text-sm text-gray-500"
               >
                 閉じる
               </button>
@@ -1490,7 +1500,7 @@ export default function SettingsPage() {
               .filter((m) => m.id !== menuData.id && m.exercises.length > 0)
               .map((m) => (
                 <div key={m.id} className="mb-4">
-                  <p className="text-xs font-bold text-gray-700 mb-1.5">{m.name}</p>
+                  <p className="text-sm font-bold text-gray-700 mb-1.5">{m.name}</p>
                   <ul className="space-y-1.5">
                     {[...m.exercises]
                       .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
@@ -1501,14 +1511,14 @@ export default function SettingsPage() {
                         >
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 mb-0.5">
-                              <span className="inline-flex px-2 py-0.5 border border-gray-400 rounded-full text-[10px]">
+                              <span className={`inline-flex px-2 py-0.5 border rounded-full text-[11px] font-bold ${bodyPartChipClass(ex.body_part)}`}>
                                 {ex.body_part}
                               </span>
-                              <span className="text-xs font-bold truncate">
+                              <span className="text-sm font-bold truncate">
                                 {ex.name || "（無題）"}
                               </span>
                             </div>
-                            <p className="text-[10px] text-gray-500">
+                            <p className="text-[11px] text-gray-500">
                               {ex.sets.length}セット
                             </p>
                           </div>
@@ -1517,7 +1527,7 @@ export default function SettingsPage() {
                             return (
                               <button
                                 onClick={() => copyExerciseFromOther(m, ex.id)}
-                                className={`px-3 py-1 text-white rounded-full text-[10px] font-bold whitespace-nowrap flex-shrink-0 transition-colors ${
+                                className={`px-3 py-1.5 text-white rounded-full text-xs font-bold whitespace-nowrap flex-shrink-0 transition-colors ${
                                   justCopied ? "bg-emerald-600" : "bg-gray-800"
                                 }`}
                               >

@@ -72,16 +72,16 @@ export default function CrossMenuSyncDialog({
         className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-4 pb-8 max-h-[85vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <p className="text-center text-sm font-bold mb-1">
+        <p className="text-center text-base font-bold mb-1">
           他のメニューにも反映しますか？
         </p>
-        <p className="text-center text-[10px] text-gray-500 mb-3">
+        <p className="text-center text-xs text-gray-500 mb-3">
           チェックしたメニューの同名種目に同じ値を書き込みます
         </p>
 
         {entries.map((entry, entryIdx) => (
           <div key={entryIdx} className="mb-4">
-            <p className="text-xs font-bold text-gray-800 mb-1.5 pb-1 border-b border-gray-200">
+            <p className="text-sm font-bold text-gray-800 mb-1.5 pb-1 border-b border-gray-200">
               {entry.exercise_name}
             </p>
 
@@ -97,7 +97,7 @@ export default function CrossMenuSyncDialog({
                 }
                 if (parts.length === 0) return null;
                 return (
-                  <div key={s.set_number} className="text-[11px] text-gray-700">
+                  <div key={s.set_number} className="text-xs text-gray-700">
                     セット{s.set_number}: {parts.join(" / ")}
                   </div>
                 );
@@ -106,7 +106,7 @@ export default function CrossMenuSyncDialog({
 
             {/* 反映先候補 */}
             {entry.target_menus.length === 0 ? (
-              <p className="text-[10px] text-gray-400 pl-1">
+              <p className="text-xs text-gray-400 pl-1">
                 同名種目を持つ他メニューはありません
               </p>
             ) : (
@@ -133,13 +133,13 @@ export default function CrossMenuSyncDialog({
                         type="checkbox"
                         checked={isChecked}
                         onChange={() => toggle(entryIdx, m.menu_id)}
-                        className="mt-0.5 accent-gray-800"
+                        className="mt-0.5 accent-gray-800 w-4 h-4"
                       />
                       <div className="flex-1 min-w-0">
-                        <div className="text-xs font-bold truncate">
+                        <div className="text-sm font-bold truncate">
                           {m.menu_name}
                         </div>
-                        <div className="text-[10px] text-gray-500">
+                        <div className="text-xs text-gray-500">
                           {currentSummary}
                         </div>
                       </div>

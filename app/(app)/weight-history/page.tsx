@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { getAllExercisesForUser, getAllSetLogsForUser } from "@/lib/local-db";
 import { getCurrentUserId } from "@/lib/sync";
-import { formatWeight } from "@/lib/types";
+import { formatWeight, bodyPartChipClass } from "@/lib/types";
 
 interface ExerciseInfo {
   id: string;
@@ -58,9 +58,9 @@ function MiniLineChart({
   isAssisted: boolean;
 }) {
   const W = 320;
-  const H = 100;
+  const H = 140;
   const PAD_X = 12;
-  const PAD_Y = 16;
+  const PAD_Y = 18;
 
   if (points.length === 0) return null;
 
@@ -171,10 +171,10 @@ function MiniLineChart({
       ))}
 
       {/* y軸ラベル: 最小・最大 */}
-      <text x={2} y={PAD_Y + 4} fontSize={9} fill="#9ca3af">
+      <text x={2} y={PAD_Y + 4} fontSize={11} fill="#6b7280">
         {isAssisted ? minW : maxW}
       </text>
-      <text x={2} y={H - PAD_Y + 9} fontSize={9} fill="#9ca3af">
+      <text x={2} y={H - PAD_Y + 11} fontSize={11} fill="#6b7280">
         {isAssisted ? maxW : minW}
       </text>
     </svg>
@@ -302,12 +302,12 @@ export default function WeightHistoryPage() {
     <div className="pb-2">
       {/* ヘッダー */}
       <div className="flex items-center justify-between px-4 pt-4 pb-2">
-        <h1 className="text-sm font-bold">重量推移</h1>
-        <span className="text-[10px] text-gray-500">
+        <h1 className="text-base font-bold">重量推移</h1>
+        <span className="text-xs text-gray-500">
           通算 {totalSessions}日
         </span>
       </div>
-      <div className="h-px bg-black mx-4 mb-3" />
+      <div className="h-px bg-gray-400 mx-4 mb-3" />
 
       {histories.map((h) => {
         const first = h.points[0];
@@ -325,15 +325,15 @@ export default function WeightHistoryPage() {
             : null;
         const isOpen = openId === h.info.id;
         return (
-          <div key={h.info.id} className="px-4 py-3 border-b border-gray-100">
+          <div key={h.info.id} className="px-4 py-3 border-b border-gray-200">
             <div className="flex items-center gap-1.5 mb-1">
-              <span className="inline-flex px-2 py-0.5 border border-gray-400 rounded-full text-[10px]">
+              <span className={`inline-flex px-2 py-0.5 border rounded-full text-[11px] font-bold ${bodyPartChipClass(h.info.body_part)}`}>
                 {h.info.body_part}
               </span>
-              <span className="text-xs font-bold truncate">{h.info.name}</span>
+              <span className="text-sm font-bold truncate">{h.info.name}</span>
               {h.info.is_assisted && (
-                <span className="ml-auto text-[9px] text-gray-500">
-                  アシスト
+                <span className="ml-auto text-[11px] text-gray-600">
+                  アシスト(値小=高負荷)
                 </span>
               )}
             </div>
@@ -342,7 +342,7 @@ export default function WeightHistoryPage() {
               <span className="text-xs text-gray-500">
                 {formatMd(first.date)} → {formatMd(last.date)}
               </span>
-              <span className="text-xs">
+              <span className="text-sm">
                 {firstEqual && lastEqual ? (
                   <>
                     <span className="text-gray-500">
@@ -354,7 +354,7 @@ export default function WeightHistoryPage() {
                     </span>
                     {change !== null && change !== 0 && (
                       <span
-                        className={`ml-1 text-[10px] ${
+                        className={`ml-1 text-[11px] font-bold ${
                           change > 0 ? "text-emerald-600" : "text-red-500"
                         }`}
                       >
@@ -372,27 +372,27 @@ export default function WeightHistoryPage() {
             <MiniLineChart points={h.points} isAssisted={h.info.is_assisted} />
 
             {/* 凡例 */}
-            <div className="flex items-center gap-3 mt-1 text-[9px] text-gray-500">
+            <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[11px] text-gray-600">
               <span className="flex items-center gap-1">
-                <span className="inline-block w-2.5 h-0.5 bg-red-500" /> TOP
+                <span className="inline-block w-3 h-0.5 bg-red-500" /> TOP(限界)
               </span>
               <span className="flex items-center gap-1">
-                <span className="inline-block w-2.5 h-0.5 bg-blue-500" />
-                バックオフ
+                <span className="inline-block w-3 h-0.5 bg-blue-500" />
+                バックオフ(TOPの%)
               </span>
               <span className="flex items-center gap-1">
-                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
-                揃った日
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                揃った日(全セット同重量)
               </span>
             </div>
 
-            <div className="flex items-center justify-between mt-1">
-              <span className="text-[10px] text-gray-400">
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-[11px] text-gray-500">
                 {h.points.length}日分
               </span>
               <button
                 onClick={() => setOpenId(isOpen ? null : h.info.id)}
-                className="text-[10px] text-gray-600 underline"
+                className="px-3 py-1 bg-gray-200 rounded-full text-xs font-bold text-gray-700"
               >
                 {isOpen ? "閉じる" : "詳細"}
               </button>
@@ -403,11 +403,11 @@ export default function WeightHistoryPage() {
                 {[...h.points].reverse().map((p) => (
                   <li
                     key={p.date}
-                    className={`flex items-center justify-between rounded-lg px-3 py-1.5 text-[10px] ${
+                    className={`flex items-center justify-between rounded-lg px-3 py-1.5 text-xs ${
                       p.allEqual ? "bg-emerald-50 border border-emerald-200" : "bg-gray-100"
                     }`}
                   >
-                    <span className="text-gray-500">{formatMd(p.date)}</span>
+                    <span className="text-gray-600">{formatMd(p.date)}</span>
                     <span className="text-right">
                       <span className="text-red-500 font-bold">
                         TOP {formatWeight(p.topWeight, h.info.is_assisted)} ×{p.topReps}

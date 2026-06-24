@@ -21,7 +21,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen px-6 bg-white">
-      <h1 className="text-xl font-bold mb-8">筋トレメニュー</h1>
+      <h1 className="text-2xl font-bold mb-8">筋トレメニュー</h1>
 
       <form action={handleSubmit} className="w-full max-w-xs space-y-4">
         <div>
@@ -30,7 +30,9 @@ export default function LoginPage() {
             type="email"
             placeholder="メールアドレス"
             required
-            className="w-full px-4 py-2 rounded-full bg-gray-200 text-sm outline-none"
+            className={`w-full px-4 py-2.5 rounded-full bg-gray-100 border text-base outline-none ${
+              error ? "border-red-400" : "border-gray-300"
+            }`}
           />
         </div>
         <div>
@@ -40,26 +42,34 @@ export default function LoginPage() {
             placeholder="パスワード"
             required
             minLength={6}
-            className="w-full px-4 py-2 rounded-full bg-gray-200 text-sm outline-none"
+            className={`w-full px-4 py-2.5 rounded-full bg-gray-100 border text-base outline-none ${
+              error ? "border-red-400" : "border-gray-300"
+            }`}
           />
         </div>
 
         {error && (
-          <p className="text-red-500 text-xs text-center">{error}</p>
+          <p className="text-red-500 text-sm text-center">{error}</p>
         )}
 
         <button
           type="submit"
           disabled={loading}
-          className="w-full py-2 rounded-full bg-gray-800 text-white text-sm font-bold disabled:opacity-50"
+          className="w-full py-2.5 rounded-full bg-gray-800 text-white text-base font-bold disabled:opacity-50"
         >
-          {loading ? "..." : mode === "login" ? "ログイン" : "新規登録"}
+          {loading
+            ? mode === "login"
+              ? "ログイン中..."
+              : "登録中..."
+            : mode === "login"
+            ? "ログイン"
+            : "新規登録"}
         </button>
       </form>
 
       <button
         onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(null); }}
-        className="mt-4 text-xs text-gray-500 underline"
+        className="mt-6 text-sm text-gray-600 underline"
       >
         {mode === "login" ? "アカウントを作成する" : "ログインに戻る"}
       </button>

@@ -93,3 +93,19 @@ export function formatWeight(weight: number, isAssisted: boolean): string {
   return `${weight}kg`;
 }
 
+// 部位バッジ用の Tailwind class。視覚的に部位を即識別できるようにする。
+// TOPセットの amber と被らないよう、肩は teal を採用。
+const BODY_PART_COLOR_CLASS: Record<string, string> = {
+  胸: "bg-rose-50 border-rose-300 text-rose-900",
+  背中: "bg-blue-50 border-blue-300 text-blue-900",
+  肩: "bg-teal-50 border-teal-300 text-teal-900",
+  腕: "bg-violet-50 border-violet-300 text-violet-900",
+  脚: "bg-green-50 border-green-300 text-green-900",
+  腹: "bg-yellow-50 border-yellow-400 text-yellow-900",
+  体幹: "bg-cyan-50 border-cyan-300 text-cyan-900",
+  全身: "bg-slate-50 border-slate-400 text-slate-900",
+};
+export function bodyPartChipClass(bodyPart: string): string {
+  return BODY_PART_COLOR_CLASS[bodyPart] ?? "bg-white border-gray-400 text-gray-800";
+}
+

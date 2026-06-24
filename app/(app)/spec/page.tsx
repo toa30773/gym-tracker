@@ -2,12 +2,12 @@ export default function SpecPage() {
   return (
     <div className="pb-6">
       <div className="px-4 pt-4 pb-2">
-        <h1 className="text-base font-bold">仕様書 / 使い方</h1>
-        <p className="text-[10px] text-gray-500 mt-1">
+        <h1 className="text-lg font-bold">仕様書 / 使い方</h1>
+        <p className="text-xs text-gray-500 mt-1">
           このアプリの使い方をまとめたページです
         </p>
       </div>
-      <div className="h-px bg-black mx-4 mb-4" />
+      <div className="h-px bg-gray-400 mx-4 mb-4" />
 
       <Section title="📱 アプリ概要">
         <p>
@@ -17,6 +17,21 @@ export default function SpecPage() {
           <li>メニュー（最大10）を曜日や間隔で出し分け</li>
           <li>セットごとの実績を記録し、自動で進歩を提案</li>
           <li>重量推移をグラフで確認</li>
+        </ul>
+        <p className="mt-2">
+          画面下のタブで <span className="font-bold">設定 / メニュー / 重量推移</span> を切り替えます。一番左の <span className="font-bold">?</span> ボタンがこの仕様書ページです。
+        </p>
+      </Section>
+
+      <Section title="🔐 ログイン">
+        <ul className="list-disc pl-5 space-y-0.5">
+          <li>メールアドレスとパスワード（6文字以上）で登録・ログイン</li>
+          <li>
+            ログインしたデバイス間で同じアカウントなら、メニューと実績が自動で同期される
+          </li>
+          <li>
+            一度ログインすればオフラインでも全機能が使える（再ログインは基本不要）
+          </li>
         </ul>
       </Section>
 
@@ -124,11 +139,45 @@ export default function SpecPage() {
             「計画に反映」で次回からの計画が自動更新される
           </li>
         </ul>
+
+        <p className="font-bold mt-3">画面上の補助表示</p>
+        <ul className="list-disc pl-5 space-y-0.5">
+          <li>
+            <span className="font-bold">「更新 N回」</span>（右上）：バックオフの重量が TOP と同値に揃った回数。重量レベルを何段階上げたかの目安
+          </li>
+          <li>
+            <span className="font-bold">「前回 Xkg ×Y回」</span>（各セット下）：そのセットを前回記録したときの実値。前回より落とさない目印に使う
+          </li>
+          <li>
+            <span className="font-bold">TOP バッジ</span>：枠線付きで濃いグレーのセットがトップ（限界セット）
+          </li>
+        </ul>
+      </Section>
+
+      <Section title="🔄 他メニューへの自動反映">
+        <p>
+          同じ種目名を <span className="font-bold">複数のメニュー</span> に登録している場合、片方で重量を変更すると「他のメニューにも反映しますか？」というダイアログが出ます。
+        </p>
+        <ul className="list-disc pl-5 space-y-0.5 mt-1">
+          <li>
+            チェックしたメニューにだけ同じ値を書き込む
+          </li>
+          <li>
+            設定画面からの変更は <span className="font-bold">重量＋レップ数</span> 両方が反映対象。記録画面（実績入力）からは <span className="font-bold">重量のみ</span>
+          </li>
+          <li>
+            メニューAではダンベル、メニューBではマシンで「同じプレスでも重量レベルが違う」みたいな種目はチェックを外す
+          </li>
+        </ul>
       </Section>
 
       <Section title="📈 重量推移画面">
         <ul className="list-disc pl-5 space-y-0.5">
           <li>種目ごとに過去の重量変化をグラフ表示</li>
+          <li>
+            <span className="font-bold">赤線 = TOP</span>（限界セット）、<span className="font-bold">青線 = バックオフ</span>（TOPの%）、<span className="font-bold">緑点 = 揃った日</span>（全セットが同じ重量で完成した日）
+          </li>
+          <li>右上の「○○kg → ○○kg (+Nkg)」は「揃った日」だけを対象にした重量変化</li>
           <li>「詳細」を押すと日付ごとの重量とレップ数の一覧</li>
           <li>アシスト種目は値が下がるほど改善（右下がり = 進歩）</li>
         </ul>
@@ -139,9 +188,14 @@ export default function SpecPage() {
           ジムで電波が無くても普通に使えます。データは端末内に保存され、オンラインに戻ったときに自動で同期されます。
         </p>
         <ul className="list-disc pl-5 space-y-0.5 mt-1">
-          <li>未同期件数があるときは画面上部にバナーが出る</li>
+          <li>
+            未同期の編集があるときは画面上部にバナーが出る。<span className="font-bold">放置で OK</span>（オンライン復帰時に自動同期）。タップすると即時に同期を試みる
+          </li>
           <li>ログインさえ済んでいればオフラインで全機能 OK</li>
           <li>ホーム画面に追加するとアプリのように起動できる（PWA）</li>
+          <li>
+            同期はクラウドと端末の <span className="font-bold">差分</span> を取って双方向で行われるので、別の端末で記録したデータも自動で取り込まれる
+          </li>
         </ul>
       </Section>
 
@@ -159,7 +213,7 @@ export default function SpecPage() {
         </ul>
       </Section>
 
-      <p className="text-center text-[10px] text-gray-400 mt-6">
+      <p className="text-center text-xs text-gray-500 mt-6">
         困ったら作った人に聞いてください
       </p>
     </div>
@@ -175,8 +229,10 @@ function Section({
 }) {
   return (
     <section className="px-4 mb-5">
-      <h2 className="text-sm font-bold mb-2">{title}</h2>
-      <div className="text-xs text-gray-700 leading-relaxed space-y-1">
+      <h2 className="text-base font-bold mb-2 pl-2 border-l-4 border-gray-800">
+        {title}
+      </h2>
+      <div className="text-sm text-gray-700 leading-relaxed space-y-1">
         {children}
       </div>
     </section>
