@@ -28,6 +28,13 @@ import HeaderMenu from "@/components/HeaderMenu";
 import type { Menu, Exercise, WorkoutSet, MenuWithExercises } from "@/lib/types";
 import { WEIGHT_STEPS, formatWeight, roundToStep, normalizeExerciseName, bodyPartChipClass } from "@/lib/types";
 import { effectiveToday, ymdLocal } from "@/lib/date";
+import {
+  saveMenuToTrash,
+  getMenuFromTrash,
+  clearTrash,
+  trashRemainingMs,
+  type TrashedMenu,
+} from "@/lib/trash";
 
 const BODY_PARTS = ["胸", "背中", "肩", "腕", "脚", "腹", "体幹", "全身"];
 const DAYS = ["月", "火", "水", "木", "金", "土", "日"];
@@ -168,6 +175,9 @@ export default function SettingsPage() {
   // 共有モーダルに表示するテキスト。null で非表示。
   const [shareText, setShareText] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
+  // 直前に削除したメニューの復元バナー用。null = 戻せるものがない。
+  const [trashed, setTrashed] = useState<TrashedMenu | null>(null);
+  const [restoring, setRestoring] = useState(false);
   // 保存バーを差し込む先（AppLayout の slot）。マウント後にだけ見つかる。
   const [actionBarSlot, setActionBarSlot] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -269,6 +279,11 @@ export default function SettingsPage() {
   // 切替可能なメニュー数 = 保存済み + 次の1つ（最大MAX_MENUS）
   const visibleCount = Math.min(savedMenus.length + 1, MAX_MENUS);
 
+  // マウント時に復元可能なメニューがあれば取り出す（24h 経過済なら null）。
+  useEffect(() => {
+    setTrashed(getMenuFromTrash());
+  }, []);
+
   async function deleteMenu() {
     if (!menuData.id || deleting) return;
     setDeleting(true);
@@ -277,6 +292,9 @@ export default function SettingsPage() {
       setDeleting(false);
       return;
     }
+    // 削除直前に「保存済の状態」を trash に退避する。menuData は未保存編集を含むので使わない。
+    const snapshot = savedMenus.find((m) => m.id === menuData.id);
+    if (snapshot) saveMenuToTrash(snapshot);
     try {
       await deleteMenuLocal(menuData.id, userId);
     } catch (e) {
@@ -298,8 +316,79 @@ export default function SettingsPage() {
     }
     setConfirmDelete(false);
     setDeleting(false);
+    setTrashed(getMenuFromTrash());
     setMessage("削除しました");
     setTimeout(() => setMessage(""), 2000);
+  }
+
+  // 直前に削除したメニューを復元する。新しい ID で put し直す（既存 ID の削除が
+  // 他デバイスへ sync 済の場合に衝突しないように）。
+  async function restoreMenu() {
+    if (!trashed || restoring) return;
+    setRestoring(true);
+    try {
+      const userId = await getCurrentUserId();
+      if (!userId) {
+        setRestoring(false);
+        return;
+      }
+      const newMenuId = newId();
+      const createdAt = nowIso();
+      await putMenu(
+        {
+          ...trashed.menu,
+          id: newMenuId,
+          user_id: userId,
+          created_at: createdAt,
+        },
+        { enqueue: true },
+      );
+      for (const exEntry of trashed.exercises) {
+        const newExerciseId = newId();
+        await putExercise(
+          {
+            ...exEntry.exercise,
+            id: newExerciseId,
+            menu_id: newMenuId,
+            user_id: userId,
+          },
+          { enqueue: true },
+        );
+        for (const s of exEntry.sets) {
+          await putSet(
+            {
+              ...s,
+              id: newId(),
+              exercise_id: newExerciseId,
+              user_id: userId,
+            },
+            { enqueue: true },
+          );
+        }
+      }
+      runSync().catch(() => {});
+      clearTrash();
+      setTrashed(null);
+      const list = await fetchMenus();
+      if (list) {
+        const restoredIdx = list.findIndex((m) => m.id === newMenuId);
+        if (restoredIdx >= 0) {
+          setCurrentIdx(restoredIdx);
+          loadMenu(list[restoredIdx]);
+        }
+      }
+      setMessage("復元しました");
+      setTimeout(() => setMessage(""), 2000);
+    } catch (e) {
+      console.error("メニュー復元に失敗しました", e);
+    } finally {
+      setRestoring(false);
+    }
+  }
+
+  function dismissTrash() {
+    clearTrash();
+    setTrashed(null);
   }
   const isNewMenu = currentIdx >= savedMenus.length;
 
@@ -929,8 +1018,45 @@ export default function SettingsPage() {
     setTimeout(() => setMessage(""), 2000);
   }
 
+  // 復元バナーに表示する残り時間（〜時間 / 〜分）。24h で trash は自動消滅する。
+  const trashRemainingLabel = (() => {
+    if (!trashed) return "";
+    const ms = trashRemainingMs(trashed);
+    const mins = Math.floor(ms / 60000);
+    if (mins >= 60) return `あと${Math.floor(mins / 60)}時間`;
+    if (mins > 0) return `あと${mins}分`;
+    return "まもなく失効";
+  })();
+
   return (
     <div className="pb-2">
+      {/* 削除取り消しバナー。最後の削除から24時間以内かつ「戻す」未押下の間だけ表示。 */}
+      {trashed && (
+        <div className="mx-4 mt-3 mb-1 flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-amber-900 truncate">
+              <span className="font-bold">「{trashed.menu.name || "（無題）"}」</span>
+              を削除しました
+            </p>
+            <p className="text-[10px] text-amber-700">{trashRemainingLabel}まで戻せます</p>
+          </div>
+          <button
+            onClick={restoreMenu}
+            disabled={restoring}
+            className="px-3 py-1.5 bg-amber-600 text-white rounded-full text-xs font-bold whitespace-nowrap disabled:opacity-50"
+          >
+            {restoring ? "復元中..." : "戻す"}
+          </button>
+          <button
+            onClick={dismissTrash}
+            disabled={restoring}
+            className="text-amber-700 text-lg leading-none px-1 disabled:opacity-50"
+            title="この通知を消す"
+          >
+            ×
+          </button>
+        </div>
+      )}
       <div key={currentIdx} className="menu-fade-in">
       {/* ヘッダー */}
       <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2">
