@@ -26,8 +26,8 @@ import CrossMenuSyncDialog, {
 } from "@/components/CrossMenuSyncDialog";
 import HeaderMenu from "@/components/HeaderMenu";
 import type { Menu, Exercise, WorkoutSet, MenuWithExercises } from "@/lib/types";
-import { WEIGHT_STEPS, roundToStep, normalizeExerciseName, bodyPartChipClass } from "@/lib/types";
-import { ymdLocal } from "@/lib/date";
+import { WEIGHT_STEPS, formatWeight, roundToStep, normalizeExerciseName, bodyPartChipClass } from "@/lib/types";
+import { effectiveToday, ymdLocal } from "@/lib/date";
 
 const BODY_PARTS = ["胸", "背中", "肩", "腕", "脚", "腹", "体幹", "全身"];
 const DAYS = ["月", "火", "水", "木", "金", "土", "日"];
@@ -37,10 +37,10 @@ const DAY_INDEX_BY_LABEL: Record<string, number> = {
   日: 0, 月: 1, 火: 2, 水: 3, 木: 4, 金: 5, 土: 6,
 };
 
-// 起点曜日に該当する「今日以降の最初の日付」を YYYY-MM-DD (ローカル) で返す
+// 起点曜日に該当する「今日以降の最初の日付」を YYYY-MM-DD (ローカル) で返す。
+// 「今日」は effectiveToday を使う（深夜0〜4時は前日扱い）。
 function nextDateOfDay(label: string): string {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = effectiveToday();
   const todayIdx = today.getDay();
   const targetIdx = DAY_INDEX_BY_LABEL[label] ?? todayIdx;
   const diff = (targetIdx - todayIdx + 7) % 7;
@@ -103,6 +103,43 @@ const defaultExercise = (): ExerciseData => ({
   sets: [defaultSet(1)],
 });
 
+// メニューを AI アプリ等に貼り付けて使える可読テキストに変換する。
+function menuToShareText(m: MenuData): string {
+  const lines: string[] = [];
+  lines.push(`【メニュー】${m.name || "（無題）"}`);
+  if (m.interval_days && m.days.length > 0) {
+    lines.push(`【サイクル】${m.days[0]}起点 / ${m.interval_days}日おき`);
+  } else if (m.days.length > 0) {
+    lines.push(`【曜日】${m.days.join("・")}`);
+  } else {
+    lines.push(`【曜日】未設定`);
+  }
+  lines.push("");
+
+  let lastBodyPart = "";
+  for (const ex of m.exercises) {
+    if (ex.body_part !== lastBodyPart) {
+      lines.push(`▼ ${ex.body_part}`);
+      lastBodyPart = ex.body_part;
+    }
+    const exName = ex.name.trim() || "（無題種目）";
+    lines.push(`・${exName}${ex.is_assisted ? "（アシスト）" : ""}`);
+    const sorted = [...ex.sets].sort((a, b) => a.set_number - b.set_number);
+    sorted.forEach((s, i) => {
+      const isTop = i === sorted.length - 1;
+      const w = formatWeight(s.weight, ex.is_assisted);
+      const label = isTop ? "TOP" : `${s.set_number}セット目`;
+      const note = isTop ? "（限界まで）" : "";
+      lines.push(`  ${label}: ${w} × ${s.reps}回${note}`);
+    });
+    const mh = ex.sets.find((s) => s.machine_height)?.machine_height;
+    if (mh) lines.push(`  椅子高さ: ${mh}`);
+    lines.push("");
+  }
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return lines.join("\n");
+}
+
 const defaultMenu = (idx: number): MenuData => ({
   name: `メニュー${idx + 1}`,
   days: [],
@@ -128,6 +165,9 @@ export default function SettingsPage() {
   // 「コピー」を押した直後に視覚フィードバックを出すための一時記憶（exercise.id の集合）
   const [recentlyCopiedIds, setRecentlyCopiedIds] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // 共有モーダルに表示するテキスト。null で非表示。
+  const [shareText, setShareText] = useState<string | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
   // 保存バーを差し込む先（AppLayout の slot）。マウント後にだけ見つかる。
   const [actionBarSlot, setActionBarSlot] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -309,7 +349,7 @@ export default function SettingsPage() {
       let dayList = prev.days;
       let startLabel: string;
       if (dayList.length === 0) {
-        startLabel = DAY_LABEL_BY_INDEX[new Date().getDay()];
+        startLabel = DAY_LABEL_BY_INDEX[effectiveToday().getDay()];
         dayList = [startLabel];
       } else {
         startLabel = dayList[0];
@@ -1200,6 +1240,16 @@ export default function SettingsPage() {
             他のメニューから
           </button>
         )}
+        <button
+          onClick={() => {
+            setShareText(menuToShareText(menuData));
+            setShareCopied(false);
+          }}
+          className="px-4 h-10 flex items-center justify-center bg-white border border-gray-400 rounded-full text-xs font-bold text-gray-700 hover:bg-gray-100"
+          title="メニューをテキストとしてコピー"
+        >
+          共有
+        </button>
       </div>
 
       </div>
@@ -1552,6 +1602,57 @@ export default function SettingsPage() {
             >
               完了
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 共有モーダル。メニューをテキスト化してクリップボードへコピー＋プレビュー。
+          navigator.clipboard.writeText が失敗する環境 (insecure context など) でも
+          textarea を全選択した状態にして手動コピーできるようにフォールバックする。 */}
+      {shareText !== null && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-end"
+          onClick={() => setShareText(null)}
+        >
+          <div
+            className="w-full max-w-[430px] mx-auto bg-white rounded-t-2xl p-4 pb-8 max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-base font-bold mb-1">メニューを共有</h2>
+            <p className="text-xs text-gray-500 mb-3">
+              下のテキストをコピーして AI アプリやチャットに貼り付けてください。
+            </p>
+            <textarea
+              readOnly
+              value={shareText}
+              onFocus={(e) => e.currentTarget.select()}
+              className="w-full flex-1 min-h-[220px] p-3 border border-gray-300 rounded-lg text-xs font-mono bg-gray-50 resize-none"
+            />
+            <div className="flex gap-2 mt-3 items-center">
+              <button
+                onClick={() => setShareText(null)}
+                className="flex-1 py-2.5 bg-gray-200 rounded-full text-sm font-bold"
+              >
+                閉じる
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(shareText);
+                    setShareCopied(true);
+                    setTimeout(() => setShareCopied(false), 2000);
+                  } catch {
+                    // フォールバック：textarea 経由で手動コピーを促す
+                    setShareCopied(false);
+                  }
+                }}
+                className={`flex-1 py-2.5 rounded-full text-sm font-bold text-white transition-colors ${
+                  shareCopied ? "bg-emerald-600" : "bg-gray-800"
+                }`}
+              >
+                {shareCopied ? "✓ コピー済" : "コピー"}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -18,7 +18,7 @@ import type {
   WorkoutSet,
 } from "@/lib/types";
 import { roundToStep, formatWeight, normalizeExerciseName, bodyPartChipClass } from "@/lib/types";
-import { diffDaysLocal, parseYmdLocal, ymdLocal } from "@/lib/date";
+import { diffDaysLocal, effectiveToday, parseYmdLocal, ymdLocal } from "@/lib/date";
 import CrossMenuSyncDialog, {
   type ChangedSet,
   type ExerciseChangeEntry,
@@ -58,7 +58,8 @@ const DAY_MAP: Record<number, string> = {
 const COMPLETED_KEY_PREFIX = "completed-exercises-";
 
 function isMenuActiveToday(menu: Menu): boolean {
-  const today = new Date();
+  // 0〜4時はカレンダー上の前日として扱う（深夜トレーニング中に日付が切り替わってメニューが消えるのを防ぐ）
+  const today = effectiveToday();
   const todayLabel = DAY_MAP[today.getDay()];
 
   // 間隔モード（起点曜日 + 間隔）：start_date を基準に N 日おきで判定。
@@ -79,7 +80,7 @@ function isMenuActiveToday(menu: Menu): boolean {
 }
 
 function todayKey(): string {
-  return ymdLocal(new Date());
+  return ymdLocal(effectiveToday());
 }
 
 export default function MainPage() {
